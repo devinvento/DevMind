@@ -4,11 +4,13 @@
 
 # 🚀 DevMind Enterprise AI Operating System & CLI Suite (v3.0.0)
 
-An intelligent, developer-friendly AI Engineering Operating System & Unified CLI Tool (`devmind`). It unifies **Everything Claude Code (ECC)**, **Graphify Knowledge Graphs**, **Specialized Agent Personas**, **Operational Workflows**, **Git & Database Intelligence**, **Project Memory Layer**, **ADR Management**, and **Antigravity IDE MCP Integration** into a single cohesive operating framework.
+An intelligent, developer-friendly **AI Engineering Operating System & Unified CLI Tool (`devmind`)**. It unifies **Everything Claude Code (ECC)**, **Graphify Knowledge Graphs**, **Specialized Agent Personas**, **Operational Workflows**, **Git & Database Intelligence**, **Project Memory Layer**, **ADR Management**, and **Antigravity IDE MCP Integration** into a single cohesive operating framework.
 
 ---
 
-## 📊 System Architecture & 11-Step Pipeline
+## 📊 Graphical System Architecture & Workflow
+
+### 1. Master System Pipeline (11-Step Integration)
 
 ```mermaid
 flowchart TD
@@ -40,6 +42,62 @@ flowchart TD
     end
 
     Step11 --> End(["✅ Setup Complete: DevMind CLI & AI Pair Programming Ready"])
+```
+
+---
+
+### 2. VS Code Extension & File Impact Workflow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Developer / AI Agent
+    participant VSCode as VS Code Extension
+    participant CLI as DevMind CLI Engine
+    participant Graphify as Graphify & AST Parser
+    participant Webview as Interactive HTML Webview
+
+    User->>VSCode: Right-Click File -> "DevMind: File Impact Analysis"
+    VSCode->>CLI: Execute `devmind impact <file_path>`
+    CLI->>Graphify: Query graph.json (Downstream consumers & Upstream dependencies)
+    CLI-->>VSCode: Terminal output (Matched node, dependents, upstream imports)
+    VSCode->>Webview: Launch `DevMindGraphWebview` with query focus
+    Webview-->>User: Interactive Vis.js 2D Knowledge Graph filtered & focused on node
+```
+
+---
+
+## 🎨 VS Code Extension Graphical Interface
+
+The native **DevMind VS Code Extension** (`devmind-vscode`) integrates AI intelligence directly into your IDE layout:
+
+```
++------------------------------------+--------------------------------------------------+
+| VS CODE ACTIVITY BAR               | EDITOR & INTERACTIVE GRAPH WEBVIEW               |
++------------------------------------+--------------------------------------------------+
+| [DevMind OS Sidebar]               |  [graphify-out/graph.html]                       |
+|                                    |  +--------------------------------------------+  |
+|  🩺 System Health & Score          |  | 🧠 DevMind Knowledge Graph v2.0  [Search]   |  |
+|     ├── Engineering Score: 89%     |  |                                            |  |
+|     ├── Run Doctor Diagnostics     |  |   (Node A) ---> [Target File] ---> (Node B) |  |
+|     └── Sync AI Context            |  |                     |                      |  |
+|                                    |  |                     v                      |  |
+|  🧠 Project Memory                 |  |                 (Node C)                   |  |
+|     ├── decisions.md               |  +--------------------------------------------+  |
+|     ├── known-issues.md            |                                                  |
+|     └── project-history.md         |  OUTPUT CHANNEL: [DevMind OS]                    |
+|                                    |  ============================================    |
+|  📜 Architecture Decisions (ADRs)  |  Target Symbol/File: setup-ai-project.sh         |
+|     ├── + Create New ADR           |  Matched Node: setup-ai-project.sh               |
+|     └── 001-initial-arch.md        |  Direct Consumers:                               |
+|                                    |    └── setup_ai_project_build_graphify_graph    |
+|  📊 Knowledge Graph & Impact       |  ============================================    |
+|     ├── Graphify Index: Active     |                                                  |
+|     ├── Open Interactive Graph     |                                                  |
+|     └── Analyze File Impact...     |                                                  |
++------------------------------------+--------------------------------------------------+
+| STATUS BAR: $(brain) DevMind: 89% (Click to run Doctor diagnostics)                  |
++---------------------------------------------------------------------------------------+
 ```
 
 ---
@@ -85,7 +143,7 @@ DevMind maintains a long-term engineering memory so AI agents never repeat past 
 
 ## 📊 DevMind Engineering Score Matrix
 
-```
+```text
 ====================================================
       DEVMIND ENGINEERING SCORE & DIAGNOSTICS      
 ====================================================
@@ -106,40 +164,23 @@ DevMind maintains a long-term engineering memory so AI agents never repeat past 
 
 ---
 
-## 🚀 Usage & Quick Start
+## 🚀 Quick Start & Dependency Setup
 
+### 1. Run Automated Setup Script
 ```bash
-# 1. Run Setup & Install DevMind CLI
 ./setup-ai-project.sh /path/to/project
-
-# 2. Run Diagnostics
-devmind doctor
-
-# 3. Plan a Task
-devmind plan "Add OTP verification"
-
-# 4. Check File Impact
-devmind impact setup-ai-project.sh
-
-# 5. Sync AI Context
-devmind sync
 ```
+This automatically verifies/installs Node.js, Python 3, `uv`, Graphify (`uv tool install "graphifyy[gemini]"`), Everything Claude Code, and the `devmind` CLI.
 
----
-
-## 🧩 DevMind VS Code Extension (`vscode-extension/`)
-
-DevMind provides a native VS Code Extension that brings AI context, diagnostics, and knowledge graph tools directly into your IDE:
-
-- **Sidebar Dashboard**: System health score, project memory explorer, ADR manager, and Graphify status.
-- **Status Bar Badge**: Live engineering score indicator (`$(brain) DevMind: 89%`).
-- **File Explorer Context Menu**: Right-click any file to trigger **DevMind: File Impact Analysis** and **Git Blame Intelligence**.
-- **Interactive Knowledge Graph**: Render Graphify network graphs directly in VS Code Webview tabs.
-
-### Quick Extension Setup:
+### 2. Build & Package VS Code Extension
 ```bash
 cd vscode-extension
 npm install
 npm run compile
+npx @vscode/vsce package --no-dependencies
 ```
 
+### 3. Install VSIX Extension in VS Code
+```bash
+code --install-extension devmind-vscode-1.0.0.vsix
+```
