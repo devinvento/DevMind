@@ -47,10 +47,11 @@ export class DevMindSidebarProvider implements vscode.TreeDataProvider<DevMindTr
         if (!element) {
             // Root categories
             return [
-                new DevMindTreeItem('🩺 System Health & Score', vscode.TreeItemCollapsibleState.Expanded, 'category_health', undefined, 'pulse'),
-                new DevMindTreeItem('🧠 Project Memory', vscode.TreeItemCollapsibleState.Collapsed, 'category_memory', undefined, 'circuit-board'),
+                new DevMindTreeItem('🩺 System Health & Audits', vscode.TreeItemCollapsibleState.Expanded, 'category_health', undefined, 'pulse'),
+                new DevMindTreeItem('🤖 AI Task Planner & Review', vscode.TreeItemCollapsibleState.Expanded, 'category_ai_tasks', undefined, 'robot'),
+                new DevMindTreeItem('📊 Knowledge Graph & Code Intelligence', vscode.TreeItemCollapsibleState.Collapsed, 'category_graph', undefined, 'graph'),
                 new DevMindTreeItem('📜 Architecture Decisions (ADRs)', vscode.TreeItemCollapsibleState.Collapsed, 'category_adr', undefined, 'law'),
-                new DevMindTreeItem('📊 Knowledge Graph & Impact', vscode.TreeItemCollapsibleState.Collapsed, 'category_graph', undefined, 'graph')
+                new DevMindTreeItem('🧠 Project Memory', vscode.TreeItemCollapsibleState.Collapsed, 'category_memory', undefined, 'circuit-board')
             ];
         }
 
@@ -78,27 +79,78 @@ export class DevMindSidebarProvider implements vscode.TreeDataProvider<DevMindTr
                     'action_sync',
                     { command: 'devmind.sync', title: 'Sync AI Context' },
                     'sync'
+                ),
+                new DevMindTreeItem(
+                    'Audit Security Vulnerabilities',
+                    vscode.TreeItemCollapsibleState.None,
+                    'action_security',
+                    { command: 'devmind.auditSecurity', title: 'Audit Security' },
+                    'shield'
+                ),
+                new DevMindTreeItem(
+                    'Analyze Database Architecture',
+                    vscode.TreeItemCollapsibleState.None,
+                    'action_db',
+                    { command: 'devmind.dbAnalyze', title: 'Analyze DB Schema' },
+                    'database'
                 )
             ];
         }
 
-        if (element.contextValue === 'category_memory') {
-            const memoryDir = path.join(root, '.devmind', 'memory');
-            if (!fs.existsSync(memoryDir)) {
-                return [new DevMindTreeItem('Memory Directory Not Found', vscode.TreeItemCollapsibleState.None, 'info', undefined, 'info')];
-            }
-
-            const files = fs.readdirSync(memoryDir).filter(f => f.endsWith('.md'));
-            return files.map(file => {
-                const filePath = path.join(memoryDir, file);
-                return new DevMindTreeItem(
-                    file,
+        if (element.contextValue === 'category_ai_tasks') {
+            return [
+                new DevMindTreeItem(
+                    'Plan AI Task / Goal...',
                     vscode.TreeItemCollapsibleState.None,
-                    'memory_file',
-                    { command: 'vscode.open', title: 'Open Memory File', arguments: [vscode.Uri.file(filePath)] },
-                    'file-text'
-                );
-            });
+                    'action_plan',
+                    { command: 'devmind.plan', title: 'Plan AI Task' },
+                    'list-ordered'
+                ),
+                new DevMindTreeItem(
+                    'Run AI Code Review on Git Diff',
+                    vscode.TreeItemCollapsibleState.None,
+                    'action_review',
+                    { command: 'devmind.review', title: 'AI Code Review' },
+                    'eye'
+                )
+            ];
+        }
+
+        if (element.contextValue === 'category_graph') {
+            const graphFile = path.join(root, 'graphify-out', 'graph.json');
+            const hasGraph = fs.existsSync(graphFile);
+
+            return [
+                new DevMindTreeItem(
+                    hasGraph ? 'Graphify Index: Active' : 'Graphify Index: Missing',
+                    vscode.TreeItemCollapsibleState.None,
+                    'graph_status',
+                    undefined,
+                    hasGraph ? 'check' : 'warning',
+                    hasGraph ? 'graphify-out/graph.json' : 'Run devmind sync'
+                ),
+                new DevMindTreeItem(
+                    'Open Interactive Knowledge Graph',
+                    vscode.TreeItemCollapsibleState.None,
+                    'action_open_graph',
+                    { command: 'devmind.openGraph', title: 'Open Graph' },
+                    'eye'
+                ),
+                new DevMindTreeItem(
+                    'Analyze File Impact...',
+                    vscode.TreeItemCollapsibleState.None,
+                    'action_impact',
+                    { command: 'devmind.impact', title: 'File Impact Analysis' },
+                    'search'
+                ),
+                new DevMindTreeItem(
+                    'Inspect Git Blame Intelligence...',
+                    vscode.TreeItemCollapsibleState.None,
+                    'action_blame',
+                    { command: 'devmind.blame', title: 'Git Blame Intelligence' },
+                    'git-commit'
+                )
+            ];
         }
 
         if (element.contextValue === 'category_adr') {
@@ -132,34 +184,23 @@ export class DevMindSidebarProvider implements vscode.TreeDataProvider<DevMindTr
             return adrItems;
         }
 
-        if (element.contextValue === 'category_graph') {
-            const graphFile = path.join(root, 'graphify-out', 'graph.json');
-            const hasGraph = fs.existsSync(graphFile);
+        if (element.contextValue === 'category_memory') {
+            const memoryDir = path.join(root, '.devmind', 'memory');
+            if (!fs.existsSync(memoryDir)) {
+                return [new DevMindTreeItem('Memory Directory Not Found', vscode.TreeItemCollapsibleState.None, 'info', undefined, 'info')];
+            }
 
-            return [
-                new DevMindTreeItem(
-                    hasGraph ? 'Graphify Index: Active' : 'Graphify Index: Missing',
+            const files = fs.readdirSync(memoryDir).filter(f => f.endsWith('.md'));
+            return files.map(file => {
+                const filePath = path.join(memoryDir, file);
+                return new DevMindTreeItem(
+                    file,
                     vscode.TreeItemCollapsibleState.None,
-                    'graph_status',
-                    undefined,
-                    hasGraph ? 'check' : 'warning',
-                    hasGraph ? 'graphify-out/graph.json' : 'Run devmind sync'
-                ),
-                new DevMindTreeItem(
-                    'Open Interactive Knowledge Graph',
-                    vscode.TreeItemCollapsibleState.None,
-                    'action_open_graph',
-                    { command: 'devmind.openGraph', title: 'Open Graph' },
-                    'eye'
-                ),
-                new DevMindTreeItem(
-                    'Analyze File Impact...',
-                    vscode.TreeItemCollapsibleState.None,
-                    'action_impact',
-                    { command: 'devmind.impact', title: 'File Impact Analysis' },
-                    'search'
-                )
-            ];
+                    'memory_file',
+                    { command: 'vscode.open', title: 'Open Memory File', arguments: [vscode.Uri.file(filePath)] },
+                    'file-text'
+                );
+            });
         }
 
         return [];
