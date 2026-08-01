@@ -37,17 +37,33 @@ exports.DevMindGraphWebview = void 0;
 const vscode = __importStar(require("vscode"));
 const path = __importStar(require("path"));
 const fs = __importStar(require("fs"));
+const child_process = __importStar(require("child_process"));
 class DevMindGraphWebview {
     static currentPanel;
-    static createOrShow(extensionUri, workspaceRoot) {
+    static createOrShow(extensionUri, workspaceRoot, searchQuery) {
         const column = vscode.window.activeTextEditor ? vscode.window.activeTextEditor.viewColumn : undefined;
-        if (DevMindGraphWebview.currentPanel) {
-            DevMindGraphWebview.currentPanel.reveal(column);
-            return;
-        }
         const htmlPath = path.join(workspaceRoot, 'graphify-out', 'graph.html');
+        // Auto-generate graph.html if missing
+        if (!fs.existsSync(htmlPath)) {
+            const genScript = path.join(workspaceRoot, 'generate_graph_html.py');
+            if (fs.existsSync(genScript)) {
+                try {
+                    child_process.execSync(`python3 "${genScript}" "${workspaceRoot}"`, { cwd: workspaceRoot });
+                }
+                catch (e) {
+                    console.error('Failed to generate graph.html:', e);
+                }
+            }
+        }
         if (!fs.existsSync(htmlPath)) {
             vscode.window.showWarningMessage('DevMind: graphify-out/graph.html not found. Please run DevMind Sync first.');
+            return;
+        }
+        if (DevMindGraphWebview.currentPanel) {
+            DevMindGraphWebview.currentPanel.reveal(column);
+            if (searchQuery) {
+                DevMindGraphWebview.currentPanel.webview.postMessage({ type: 'search', query: searchQuery });
+            }
             return;
         }
         const panel = vscode.window.createWebviewPanel('devmindGraph', 'DevMind Knowledge Graph', column || vscode.ViewColumn.One, {
@@ -61,7 +77,19 @@ class DevMindGraphWebview {
             DevMindGraphWebview.currentPanel = undefined;
         }, null);
         let htmlContent = fs.readFileSync(htmlPath, 'utf8');
-        // Allow inline scripts & webview loading
+        if (searchQuery) {
+            // Auto-trigger search query on load
+            const autoSearchScript = `<script>
+                window.addEventListener('DOMContentLoaded', () => {
+                    setTimeout(() => {
+                        if (typeof filterGraph === 'function') {
+                            filterGraph(${JSON.stringify(searchQuery)});
+                        }
+                    }, 400);
+                });
+            </script></body>`;
+            htmlContent = htmlContent.replace('</body>', autoSearchScript);
+        }
         panel.webview.html = htmlContent;
     }
 }

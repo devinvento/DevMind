@@ -82,6 +82,17 @@ def generate_html_graph(json_path: Path, html_path: Path):
         input[type="text"]:focus {{ border-color: #38BDF8; }}
         #network {{ flex: 1; width: 100%; height: 100%; background: #0F172A; }}
         .stats {{ font-size: 13px; color: #94A3B8; display: flex; gap: 16px; }}
+        div.vis-tooltip {{
+            background-color: #1E293B !important;
+            color: #F8FAFC !important;
+            border: 1px solid #334155 !important;
+            border-radius: 8px !important;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5) !important;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+            padding: 8px 12px !important;
+            font-size: 13px !important;
+            line-height: 1.5 !important;
+        }}
     </style>
 </head>
 <body>
@@ -98,8 +109,18 @@ def generate_html_graph(json_path: Path, html_path: Path):
     <div id="network"></div>
 
     <script type="text/javascript">
-        const nodesData = {json.dumps(vis_nodes)};
+        const rawNodesData = {json.dumps(vis_nodes)};
         const edgesData = {json.dumps(vis_edges)};
+
+        const nodesData = rawNodesData.map(node => {{
+            const el = document.createElement('div');
+            el.innerHTML = node.title;
+            return {{
+                ...node,
+                title: el,
+                rawTitle: node.title
+            }};
+        }});
 
         const container = document.getElementById('network');
         const data = {{
@@ -132,17 +153,41 @@ def generate_html_graph(json_path: Path, html_path: Path):
 
         const network = new vis.Network(container, data, options);
 
-        function filterGraph() {{
-            const query = document.getElementById('searchInput').value.toLowerCase();
+        function filterGraph(queryVal) {{
+            const query = (queryVal !== undefined ? queryVal : document.getElementById('searchInput').value).toLowerCase();
+            if (queryVal !== undefined) {{
+                document.getElementById('searchInput').value = queryVal;
+            }}
             const filteredNodes = nodesData.map(node => {{
-                const match = node.label.toLowerCase().includes(query) || node.title.toLowerCase().includes(query);
+                const match = node.label.toLowerCase().includes(query) || 
+                              (node.rawTitle && node.rawTitle.toLowerCase().includes(query)) ||
+                              (node.id && node.id.toLowerCase().includes(query));
                 return {{
                     ...node,
                     hidden: query ? !match : false
                 }};
             }});
             data.nodes.update(filteredNodes);
+
+            if (query) {{
+                const matchingIds = nodesData.filter(node => 
+                    node.label.toLowerCase().includes(query) || 
+                    (node.id && node.id.toLowerCase().includes(query))
+                ).map(n => n.id);
+
+                if (matchingIds.length > 0 && matchingIds.length <= 10) {{
+                    network.selectNodes(matchingIds);
+                    network.focus(matchingIds[0], {{ scale: 1.2, animation: true }});
+                }}
+            }}
         }}
+
+        window.addEventListener('message', event => {{
+            const message = event.data;
+            if (message && message.type === 'search') {{
+                filterGraph(message.query || '');
+            }}
+        }});
     </script>
 </body>
 </html>

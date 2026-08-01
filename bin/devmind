@@ -164,6 +164,11 @@ def cmd_impact(project_dir, file_path):
     print(f"{BOLD}{CYAN}===================================================={NC}")
     print(f"Target Symbol/File: {BOLD}{file_path}{NC}\n")
 
+    # Ensure graph.html is auto-updated
+    gen_script = project_dir / "generate_graph_html.py"
+    if gen_script.exists():
+        run_cmd(f"python3 {gen_script} {project_dir}", cwd=project_dir)
+
     graph_file = project_dir / "graphify-out" / "graph.json"
     if graph_file.exists():
         try:
@@ -172,29 +177,65 @@ def cmd_impact(project_dir, file_path):
             nodes = data.get("nodes", [])
             links = data.get("links", [])
 
-            # Find matching nodes
-            matches = [n for n in nodes if file_path.lower() in n.get("label", "").lower() or file_path.lower() in n.get("source_file", "").lower()]
+            # Robust matching logic
+            target_path = Path(file_path)
+            target_str = str(file_path).lower().replace('\\', '/')
+            target_name = target_path.name.lower()
+            target_stem = target_path.stem.lower()
+
+            def match_score(n):
+                node_id = str(n.get("id", "")).lower()
+                label = str(n.get("label", "")).lower()
+                norm_label = str(n.get("norm_label", "")).lower()
+                src = str(n.get("source_file", "")).lower().replace('\\', '/')
+
+                if target_str and (target_str == src or target_str == label or target_str == node_id):
+                    return 100
+                if target_name and (target_name in src or target_name == label or target_name == node_id):
+                    return 80
+                if target_stem and (target_stem in src or target_stem == label or target_stem == norm_label or target_stem == node_id):
+                    return 60
+                if target_str and (target_str in src or target_str in label or target_str in node_id):
+                    return 40
+                return 0
+
+            scored = [(match_score(n), n) for n in nodes]
+            matches = [n for score, n in sorted(scored, key=lambda x: x[0], reverse=True) if score > 0]
             
             if matches:
-                target_id = matches[0].get("id")
-                print(f"Matched Node: {GREEN}{matches[0].get('label')}{NC} (ID: {target_id})")
+                matched_node = matches[0]
+                target_id = matched_node.get("id")
+                print(f"Matched Node: {GREEN}{matched_node.get('label')}{NC} (ID: {target_id}, File: {matched_node.get('source_file') or 'N/A'})")
                 
                 # Upstream / Downstream
                 downstream = [l.get("target") for l in links if l.get("source") == target_id]
                 upstream = [l.get("source") for l in links if l.get("target") == target_id]
 
                 print(f"\n{BOLD}Direct Consumers (Dependents):{NC}")
-                for d in downstream[:8]:
-                    print(f"  └── {CYAN}{d}{NC}")
+                if downstream:
+                    for d in downstream[:12]:
+                        print(f"  └── {CYAN}{d}{NC}")
+                else:
+                    print(f"  └── {YELLOW}No direct downstream consumers found in graph.{NC}")
 
                 print(f"\n{BOLD}Upstream Dependencies:{NC}")
-                for u in upstream[:8]:
-                    print(f"  ├── {GREEN}{u}{NC}")
+                if upstream:
+                    for u in upstream[:12]:
+                        print(f"  ├── {GREEN}{u}{NC}")
+                else:
+                    print(f"  ├── {YELLOW}No upstream dependencies found in graph.{NC}")
+
+                if len(matches) > 1:
+                    print(f"\n{BOLD}Other Related Graph Nodes ({len(matches)-1}):{NC}")
+                    for m in matches[1:5]:
+                        print(f"  • {m.get('label')} ({m.get('id')})")
 
             else:
                 log_warn(f"No direct match for '{file_path}' in Graphify graph.")
         except Exception as e:
             log_err(f"Failed to parse graph.json: {e}")
+    else:
+        log_warn("graphify-out/graph.json not found. Run 'devmind sync' first.")
 
     print(f"{BOLD}{CYAN}===================================================={NC}\n")
 

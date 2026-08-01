@@ -69,9 +69,19 @@ export function registerCommands(
                 return;
             }
 
-            const relPath = path.relative(runner.getWorkspaceRoot() || '', filePath);
-            vscode.window.showInformationMessage(`DevMind: Analyzing impact for file ${relPath}...`);
+            const root = runner.getWorkspaceRoot();
+            const relPath = root ? path.relative(root, filePath) : filePath;
+            const targetSearch = path.basename(filePath);
+
+            vscode.window.showInformationMessage(`DevMind: Analyzing impact for ${relPath}...`);
+            
+            // Execute CLI impact analysis output
             await runner.executeCommand(['impact', relPath], true);
+
+            // Launch interactive HTML Knowledge Graph webview focused on target file
+            if (root) {
+                DevMindGraphWebview.createOrShow(context.extensionUri, root, targetSearch);
+            }
         })
     );
 
