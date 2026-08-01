@@ -1,0 +1,184 @@
+{
+  "name": "devmind-vscode",
+  "displayName": "DevMind Enterprise AI OS",
+  "description": "VS Code Extension for DevMind Enterprise AI Engineering OS & CLI Suite",
+  "version": "1.0.0",
+  "publisher": "devmind",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/devinvento/DevMind"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization",
+    "Linters"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:devmind.sidebarView"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "devmind-explorer",
+          "title": "DevMind OS",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "devmind-explorer": [
+        {
+          "id": "devmind.sidebarView",
+          "name": "DevMind Dashboard"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "devmind.doctor",
+        "title": "DevMind: Run Doctor Diagnostics",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "devmind.sync",
+        "title": "DevMind: Sync AI Context & Knowledge Graph",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "devmind.plan",
+        "title": "DevMind: Plan AI Task",
+        "icon": "$(list-ordered)"
+      },
+      {
+        "command": "devmind.impact",
+        "title": "DevMind: File Impact Analysis",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "devmind.blame",
+        "title": "DevMind: Git Blame Intelligence",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "devmind.auditSecurity",
+        "title": "DevMind: Audit Security",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "devmind.dbAnalyze",
+        "title": "DevMind: Analyze Database Schema",
+        "icon": "$(database)"
+      },
+      {
+        "command": "devmind.review",
+        "title": "DevMind: AI Code Review",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "devmind.createADR",
+        "title": "DevMind: Create ADR Record",
+        "icon": "$(add)"
+      },
+      {
+        "command": "devmind.listADRs",
+        "title": "DevMind: List ADR Records",
+        "icon": "$(file-text)"
+      },
+      {
+        "command": "devmind.openGraph",
+        "title": "DevMind: Open Knowledge Graph",
+        "icon": "$(graph)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "devmind.doctor"
+        },
+        {
+          "command": "devmind.sync"
+        },
+        {
+          "command": "devmind.plan"
+        },
+        {
+          "command": "devmind.impact"
+        },
+        {
+          "command": "devmind.blame"
+        },
+        {
+          "command": "devmind.auditSecurity"
+        },
+        {
+          "command": "devmind.dbAnalyze"
+        },
+        {
+          "command": "devmind.review"
+        },
+        {
+          "command": "devmind.createADR"
+        },
+        {
+          "command": "devmind.listADRs"
+        },
+        {
+          "command": "devmind.openGraph"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "devmind.impact",
+          "group": "7_devmind@1"
+        },
+        {
+          "command": "devmind.blame",
+          "group": "7_devmind@2"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "devmind.impact",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "DevMind OS",
+      "properties": {
+        "devmind.cliPath": {
+          "type": "string",
+          "default": "devmind",
+          "description": "Path to the DevMind CLI executable (defaults to 'devmind' or fallback 'python3 bin/devmind')."
+        },
+        "devmind.autoSyncOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically run 'devmind sync' when architecture or database files are saved."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --no-dependencies"
+  },
+  "overrides": {
+    "undici": "5.28.4"
+  },
+  "devDependencies": {
+    "@types/node": "^18.14.0",
+    "@types/vscode": "^1.75.0",
+    "@vscode/vsce": "^2.19.0",
+    "typescript": "^5.0.0"
+  }
+}

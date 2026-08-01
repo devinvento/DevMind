@@ -86,7 +86,7 @@ def generate_html_graph(json_path: Path, html_path: Path):
 </head>
 <body>
     <header>
-        <h1><span>🌌 Graphify Codebase Knowledge Graph</span> <span class="badge">v2.0</span></h1>
+        <h1><span><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#38BDF8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px; margin-right:6px;"><path d="M9.5 3.5A4.5 4.5 0 0 0 5 8c0 1.25.5 2.4 1.3 3.2A4.5 4.5 0 0 0 5 15.5c0 2.2 1.6 4 3.7 4.4"/><path d="M14.5 3.5A4.5 4.5 0 0 1 19 8c0 1.25-.5 2.4-1.3 3.2A4.5 4.5 0 0 1 19 15.5c0 2.2-1.6 4-3.7 4.4"/><path d="M12 3v18" stroke-dasharray="2 2"/><circle cx="12" cy="12" r="1.5" fill="#38BDF8"/></svg>DevMind Knowledge Graph</span> <span class="badge">v2.0</span></h1>
         <div class="stats">
             <span>Nodes: <b>{len(nodes)}</b></span>
             <span>Edges: <b>{len(links)}</b></span>

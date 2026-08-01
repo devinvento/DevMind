@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="DevMind.png" alt="DevMind AI Engineering Logo" width="320"/>
+</p>
+
 # 🚀 DevMind Enterprise AI Operating System & CLI Suite (v3.0.0)
 
 An intelligent, developer-friendly AI Engineering Operating System & Unified CLI Tool (`devmind`). It unifies **Everything Claude Code (ECC)**, **Graphify Knowledge Graphs**, **Specialized Agent Personas**, **Operational Workflows**, **Git & Database Intelligence**, **Project Memory Layer**, **ADR Management**, and **Antigravity IDE MCP Integration** into a single cohesive operating framework.
@@ -120,3 +124,22 @@ devmind impact setup-ai-project.sh
 # 5. Sync AI Context
 devmind sync
 ```
+
+---
+
+## 🧩 DevMind VS Code Extension (`vscode-extension/`)
+
+DevMind provides a native VS Code Extension that brings AI context, diagnostics, and knowledge graph tools directly into your IDE:
+
+- **Sidebar Dashboard**: System health score, project memory explorer, ADR manager, and Graphify status.
+- **Status Bar Badge**: Live engineering score indicator (`$(brain) DevMind: 89%`).
+- **File Explorer Context Menu**: Right-click any file to trigger **DevMind: File Impact Analysis** and **Git Blame Intelligence**.
+- **Interactive Knowledge Graph**: Render Graphify network graphs directly in VS Code Webview tabs.
+
+### Quick Extension Setup:
+```bash
+cd vscode-extension
+npm install
+npm run compile
+```
+
