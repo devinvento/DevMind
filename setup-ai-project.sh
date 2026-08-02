@@ -300,6 +300,25 @@ install_ecc_repository() {
 
     [[ -d "$ECC_DIR/skills" ]] || die "ECC skills directory not found at $ECC_DIR/skills"
     [[ -d "$ECC_DIR/rules" ]] || die "ECC rules directory not found at $ECC_DIR/rules"
+
+    # Auto-integrate Frappe skills repository
+    local frappe_skills_url="https://github.com/frappe/skills.git"
+    local frappe_skills_temp_dir="$HOME/.local/share/frappe-skills"
+    if [[ -d "$frappe_skills_temp_dir/.git" ]]; then
+        if [[ "$UPDATE_ECC" == "true" ]]; then
+            log "Updating Frappe skills repository..."
+            git -C "$frappe_skills_temp_dir" fetch --quiet
+            git -C "$frappe_skills_temp_dir" pull --ff-only --quiet || warn "Could not fast-forward Frappe skills repository."
+        fi
+    else
+        log "Cloning Frappe skills repository..."
+        mkdir -p "$(dirname "$frappe_skills_temp_dir")"
+        git clone "$frappe_skills_url" "$frappe_skills_temp_dir" --quiet
+    fi
+
+    if [[ -d "$frappe_skills_temp_dir/skills" ]]; then
+        cp -r "$frappe_skills_temp_dir/skills"/* "$ECC_DIR/skills/"
+    fi
 }
 
 ###############################################################################

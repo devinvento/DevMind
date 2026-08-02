@@ -42,8 +42,8 @@ flowchart LR
 - Interactive Sidebar view browsing `.devmind/memory/` files (`decisions.md`, `known-issues.md`, `failed-attempts.md`, `project-history.md`).
 - Manage and create Architecture Decision Records (`docs/adr/`) with auto-incremented sequence templates.
 
-### 3. 📊 Knowledge Graph & File Impact Analysis
-- Open embedded interactive HTML Knowledge Graph visualizers in VS Code Webview tabs.
+### 3. 📊 Code Graph & File Impact Analysis
+- Open embedded interactive HTML Code Graph visualizers in VS Code Webview tabs.
 - Right-click any file in the Explorer for instant **File Impact Analysis** (`devmind impact <file>`).
 - Auto-focuses network nodes and filters dependencies in 2D space.
 
@@ -74,9 +74,9 @@ flowchart LR
 |    ├── + Create New ADR                     |
 |    └── 001-initial-architecture.md          |
 |                                             |
-| 📊 Knowledge Graph & Impact                 |
+| 📊 Code Graph & Impact                      |
 |    ├── Graphify Index: Active               |
-|    ├── Open Interactive Knowledge Graph     |
+|    ├── Open Interactive Code Graph          |
 |    └── Analyze File Impact...               |
 +---------------------------------------------+
 ```
@@ -97,7 +97,7 @@ flowchart LR
 | `DevMind: AI Code Review` | `devmind.review` | Performs AI code review on uncommitted `git diff`. |
 | `DevMind: Create ADR Record` | `devmind.createADR` | Interactive input box to generate a new ADR in `docs/adr/`. |
 | `DevMind: List ADR Records` | `devmind.listADRs` | Lists all Architecture Decision Records in the output panel. |
-| `DevMind: Open Knowledge Graph` | `devmind.openGraph` | Launches the interactive Vis.js Knowledge Graph Webview tab. |
+| `DevMind: Open Code Graph` | `devmind.openGraph` | Launches the interactive Vis.js Code Graph Webview tab. |
 
 ---
 
