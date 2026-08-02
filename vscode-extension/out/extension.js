@@ -110,19 +110,6 @@ function activate(context) {
     else {
         statusBarItem.text = '$(brain) DevMind: Ready';
     }
-    // Auto Sync on Save Listener
-    context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(async (document) => {
-        const config = vscode.workspace.getConfiguration('devmind');
-        const autoSync = config.get('autoSyncOnSave');
-        if (autoSync) {
-            const fileName = document.fileName;
-            if (fileName.endsWith('ARCHITECTURE.md') || fileName.endsWith('DATABASE.md') || fileName.includes('.devmind')) {
-                vscode.window.showInformationMessage('DevMind: Auto-syncing AI context...');
-                await runner.executeCommand(['sync'], false);
-                sidebarProvider.refresh();
-            }
-        }
-    }));
     console.log('DevMind Extension Activated Successfully!');
 }
 function deactivate() { }

@@ -148,6 +148,13 @@
           "command": "devmind.impact",
           "group": "navigation"
         }
+      ],
+      "view/title": [
+        {
+          "command": "devmind.sync",
+          "when": "view == devmind.sidebarView",
+          "group": "navigation"
+        }
       ]
     },
     "configuration": {
@@ -157,11 +164,6 @@
           "type": "string",
           "default": "devmind",
           "description": "Path to the DevMind CLI executable (defaults to 'devmind' or fallback 'python3 bin/devmind')."
-        },
-        "devmind.autoSyncOnSave": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically run 'devmind sync' when architecture or database files are saved."
         }
       }
     }

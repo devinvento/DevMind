@@ -104,7 +104,6 @@ flowchart LR
 ## ⚙️ Configuration Options
 
 - `devmind.cliPath`: Path to `devmind` executable (default: `devmind` or workspace fallback `bin/devmind`).
-- `devmind.autoSyncOnSave`: Automatically refresh AI context when architecture or database files are saved.
 
 ---
 
