@@ -53,13 +53,40 @@ export class DevMindGraphWebview {
             DevMindGraphWebview.currentPanel = undefined;
         }, null);
 
+        // Handle message events from the Webview (like clicking Open File)
+        panel.webview.onDidReceiveMessage(
+            async (message) => {
+                switch (message.command) {
+                    case 'openFile':
+                        if (message.filePath) {
+                            const fullPath = path.isAbsolute(message.filePath)
+                                ? message.filePath
+                                : path.join(workspaceRoot, message.filePath);
+                            
+                            if (fs.existsSync(fullPath)) {
+                                const doc = await vscode.workspace.openTextDocument(fullPath);
+                                await vscode.window.showTextDocument(doc);
+                            } else {
+                                vscode.window.showWarningMessage(`DevMind: File not found: ${message.filePath}`);
+                            }
+                        }
+                        break;
+                }
+            },
+            undefined,
+            undefined
+        );
+
         let htmlContent = fs.readFileSync(htmlPath, 'utf8');
 
         if (searchQuery) {
-            // Auto-trigger search query on load
+            // Auto-trigger search query on load and set viewMode to impact
             const autoSearchScript = `<script>
                 window.addEventListener('DOMContentLoaded', () => {
                     setTimeout(() => {
+                        if (typeof setViewMode === 'function') {
+                            setViewMode('impact');
+                        }
                         if (typeof filterGraph === 'function') {
                             filterGraph(${JSON.stringify(searchQuery)});
                         }

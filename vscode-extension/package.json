@@ -143,10 +143,34 @@
           "group": "7_devmind@2"
         }
       ],
+      "editor/context": [
+        {
+          "command": "devmind.impact",
+          "group": "7_devmind@1"
+        },
+        {
+          "command": "devmind.blame",
+          "group": "7_devmind@2"
+        }
+      ],
       "editor/title": [
         {
           "command": "devmind.impact",
           "group": "navigation"
+        },
+        {
+          "command": "devmind.blame",
+          "group": "navigation"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "devmind.impact",
+          "group": "7_devmind@1"
+        },
+        {
+          "command": "devmind.blame",
+          "group": "7_devmind@2"
         }
       ],
       "view/title": [

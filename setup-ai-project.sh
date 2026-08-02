@@ -26,6 +26,7 @@ set -Eeuo pipefail
 ###############################################################################
 
 SCRIPT_VERSION="3.0.0"
+SCRIPT_SOURCE_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 UPDATE_ECC="false"
 PROJECT_ARG=""
@@ -253,6 +254,17 @@ install_graphify() {
 
 install_devmind_cli() {
     log "Installing DevMind CLI tool..."
+
+    if [[ "$PROJECT_DIR" != "$SCRIPT_SOURCE_DIR" ]]; then
+        log "Copying DevMind CLI and helper assets to target project..."
+        mkdir -p "$PROJECT_DIR/bin"
+        if [[ -f "$SCRIPT_SOURCE_DIR/bin/devmind" ]]; then
+            cp "$SCRIPT_SOURCE_DIR/bin/devmind" "$PROJECT_DIR/bin/devmind"
+        fi
+        if [[ -f "$SCRIPT_SOURCE_DIR/generate_graph_html.py" ]]; then
+            cp "$SCRIPT_SOURCE_DIR/generate_graph_html.py" "$PROJECT_DIR/generate_graph_html.py"
+        fi
+    fi
 
     local bin_path="$PROJECT_DIR/bin/devmind"
     if [[ -f "$bin_path" ]]; then
@@ -1071,6 +1083,65 @@ EOF
     success "Created AI_SETUP.md"
 }
 
+update_gitignore() {
+    local gitignore="$PROJECT_DIR/.gitignore"
+    log "Updating .gitignore to exclude DevMind and AI setup files..."
+
+    # Ensure .gitignore exists
+    touch "$gitignore"
+
+    # Entries to add
+    local entries=(
+        ".agents/"
+        ".devmind/"
+        "graphify-out/"
+        "AI_SETUP.md"
+        "ARCHITECTURE.md"
+        "DATABASE.md"
+        "SECURITY.md"
+        "generate_graph_html.py"
+        "bin/devmind"
+        "pytest.ini"
+        "tests/test_example.py"
+        "phpunit.xml"
+        "tests/ExampleTest.php"
+        "jest.config.js"
+        "tests/example.test.js"
+    )
+
+    local header="# DevMind AI Project Operating System"
+    local header_added=false
+    local added=0
+
+    for entry in "${entries[@]}"; do
+        if ! grep -Fqx "$entry" "$gitignore"; then
+            # Add header first if not already present and we are about to add entries
+            if ! grep -Fqx "$header" "$gitignore" && [ "$header_added" = false ]; then
+                # If the file doesn't end with a newline, add one first
+                if [[ -s "$gitignore" && "$(tail -c 1 "$gitignore" | wc -l)" -eq 0 ]]; then
+                    echo "" >> "$gitignore"
+                fi
+                echo "" >> "$gitignore"
+                echo "$header" >> "$gitignore"
+                header_added=true
+            fi
+            
+            # If the file doesn't end with a newline, add one first
+            if [[ -s "$gitignore" && "$(tail -c 1 "$gitignore" | wc -l)" -eq 0 ]]; then
+                echo "" >> "$gitignore"
+            fi
+            echo "$entry" >> "$gitignore"
+            added=$((added + 1))
+        fi
+    done
+
+    if [[ $added -gt 0 ]]; then
+        success "Added $added entries to .gitignore"
+    else
+        success ".gitignore is already up to date"
+    fi
+}
+
 ###############################################################################
 # 11. Run DevMind Doctor Diagnostics
 ###############################################################################
@@ -1119,6 +1190,7 @@ main() {
     generate_security_docs
     generate_testing_scaffold
     setup_project_memory_and_adr
+    update_gitignore
 
     # 5. Agent Personas & Workflows Generator
     generate_specialized_agents
