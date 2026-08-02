@@ -46,7 +46,7 @@ def log_err(msg):
 
 def run_cmd(cmd, cwd=None, capture=True):
     try:
-        res = subprocess.run(cmd, shell=True, cwd=cwd, text=True, capture_output=capture)
+        res = subprocess.run(cmd, shell=True, cwd=cwd, text=True, capture_output=capture, stdin=subprocess.DEVNULL)
         return res.returncode, res.stdout.strip(), res.stderr.strip()
     except Exception as e:
         return 1, "", str(e)
@@ -123,7 +123,12 @@ def cmd_sync(project_dir):
     if rc == 0:
         log_ok("Graphify knowledge graph updated (graphify-out/graph.json)")
     else:
-        log_warn(f"Graphify rebuild warning: {err or out}")
+        log_warn("No LLM API key detected or Graphify failed. Falling back to local/offline AST code-only index...")
+        rc_update, out_update, err_update = run_cmd("graphify update .", cwd=project_dir)
+        if rc_update == 0:
+            log_ok("Graphify code graph updated successfully (offline AST index).")
+        else:
+            log_warn(f"Graphify rebuild warning: {err_update or out_update}")
 
     # 2. Update HTML Visualizer
     gen_script = project_dir / "generate_graph_html.py"
@@ -132,8 +137,15 @@ def cmd_sync(project_dir):
         log_ok("HTML graph visualizer updated (graphify-out/graph.html)")
 
     # 3. Update Intelligence Docs
-    run_cmd(f"./setup-ai-project.sh {project_dir}", cwd=project_dir)
-    log_ok("Intelligence documents (DATABASE.md, ARCHITECTURE.md, SECURITY.md) refreshed!")
+    setup_script = Path(__file__).resolve().parent.parent / "setup-ai-project.sh"
+    if setup_script.exists():
+        rc, out, err = run_cmd(f"\"{setup_script}\" {project_dir}", cwd=project_dir)
+        if rc == 0:
+            log_ok("Intelligence documents (DATABASE.md, ARCHITECTURE.md, SECURITY.md) refreshed!")
+        else:
+            log_warn(f"Failed to refresh intelligence documents: {err or out}")
+    else:
+        log_warn(f"Setup script not found at {setup_script}")
     log_ok("AI Context Sync Complete! Workspace is 100% up to date.")
 
 def cmd_plan(project_dir, task):

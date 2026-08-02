@@ -22,18 +22,28 @@ export function registerCommands(
     // 1. Doctor Diagnostics
     context.subscriptions.push(
         vscode.commands.registerCommand('devmind.doctor', async () => {
-            vscode.window.showInformationMessage('DevMind: Running 8-dimensional Doctor Diagnostics...');
-            await runner.executeCommand(['doctor'], true);
-            await updateScoreBadge();
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: "DevMind: Running 8-dimensional Doctor Diagnostics...",
+                cancellable: false
+            }, async () => {
+                await runner.executeCommand(['doctor'], true);
+                await updateScoreBadge();
+            });
         })
     );
 
     // 2. Sync AI Context
     context.subscriptions.push(
         vscode.commands.registerCommand('devmind.sync', async () => {
-            vscode.window.showInformationMessage('DevMind: Refreshing Graphify Knowledge Graph & AI Context...');
-            await runner.executeCommand(['sync'], true);
-            await updateScoreBadge();
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: "DevMind: Refreshing Graphify Knowledge Graph & AI Context...",
+                cancellable: false
+            }, async () => {
+                await runner.executeCommand(['sync'], true);
+                await updateScoreBadge();
+            });
             vscode.window.showInformationMessage('DevMind: AI Context Sync Complete!');
         })
     );
@@ -47,8 +57,13 @@ export function registerCommands(
             });
 
             if (task) {
-                vscode.window.showInformationMessage(`DevMind: Generating task plan for "${task}"...`);
-                await runner.executeCommand(['plan', task], true);
+                await vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: `DevMind: Generating task plan for "${task}"...`,
+                    cancellable: false
+                }, async () => {
+                    await runner.executeCommand(['plan', task], true);
+                });
             }
         })
     );
@@ -73,10 +88,14 @@ export function registerCommands(
             const relPath = root ? path.relative(root, filePath) : filePath;
             const targetSearch = path.basename(filePath);
 
-            vscode.window.showInformationMessage(`DevMind: Analyzing impact for ${relPath}...`);
-            
-            // Execute CLI impact analysis output
-            await runner.executeCommand(['impact', relPath], true);
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: `DevMind: Analyzing impact for ${relPath}...`,
+                cancellable: false
+            }, async () => {
+                // Execute CLI impact analysis output
+                await runner.executeCommand(['impact', relPath], true);
+            });
 
             // Launch interactive HTML Knowledge Graph webview focused on target file
             if (root) {
@@ -102,31 +121,52 @@ export function registerCommands(
             }
 
             const relPath = path.relative(runner.getWorkspaceRoot() || '', filePath);
-            await runner.executeCommand(['blame', relPath], true);
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: `DevMind: Inspecting Git Blame Intelligence for ${relPath}...`,
+                cancellable: false
+            }, async () => {
+                await runner.executeCommand(['blame', relPath], true);
+            });
         })
     );
 
     // 6. Security Audit
     context.subscriptions.push(
         vscode.commands.registerCommand('devmind.auditSecurity', async () => {
-            vscode.window.showInformationMessage('DevMind: Running Security Audit...');
-            await runner.executeCommand(['audit', 'security'], true);
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: "DevMind: Running Security Audit...",
+                cancellable: false
+            }, async () => {
+                await runner.executeCommand(['audit', 'security'], true);
+            });
         })
     );
 
     // 7. DB Analyze
     context.subscriptions.push(
         vscode.commands.registerCommand('devmind.dbAnalyze', async () => {
-            vscode.window.showInformationMessage('DevMind: Analyzing Database Architecture & Schemas...');
-            await runner.executeCommand(['db', 'analyze'], true);
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: "DevMind: Analyzing Database Architecture & Schemas...",
+                cancellable: false
+            }, async () => {
+                await runner.executeCommand(['db', 'analyze'], true);
+            });
         })
     );
 
     // 8. AI Code Review
     context.subscriptions.push(
         vscode.commands.registerCommand('devmind.review', async () => {
-            vscode.window.showInformationMessage('DevMind: Running AI Code Review on uncommitted git diff...');
-            await runner.executeCommand(['review'], true);
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: "DevMind: Running AI Code Review on uncommitted git diff...",
+                cancellable: false
+            }, async () => {
+                await runner.executeCommand(['review'], true);
+            });
         })
     );
 
@@ -139,8 +179,14 @@ export function registerCommands(
             });
 
             if (title) {
-                await runner.executeCommand(['adr', 'create', title], true);
-                sidebarProvider.refresh();
+                await vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: `DevMind: Creating ADR "${title}"...`,
+                    cancellable: false
+                }, async () => {
+                    await runner.executeCommand(['adr', 'create', title], true);
+                    sidebarProvider.refresh();
+                });
             }
         })
     );
@@ -148,7 +194,13 @@ export function registerCommands(
     // 10. List ADRs
     context.subscriptions.push(
         vscode.commands.registerCommand('devmind.listADRs', async () => {
-            await runner.executeCommand(['adr', 'list'], true);
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: "DevMind: Listing Architecture Decision Records (ADRs)...",
+                cancellable: false
+            }, async () => {
+                await runner.executeCommand(['adr', 'list'], true);
+            });
         })
     );
 

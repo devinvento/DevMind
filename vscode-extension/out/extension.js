@@ -39,6 +39,9 @@ const vscode = __importStar(require("vscode"));
 const devmindRunner_1 = require("./devmindRunner");
 const devmindSidebar_1 = require("./views/devmindSidebar");
 const commands_1 = require("./commands");
+const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
+const child_process = __importStar(require("child_process"));
 function activate(context) {
     console.log('Activating DevMind Enterprise AI OS VS Code Extension...');
     const runner = new devmindRunner_1.DevMindRunner();
@@ -58,14 +61,55 @@ function activate(context) {
     context.subscriptions.push(statusBarItem);
     // Register All Extension Commands
     (0, commands_1.registerCommands)(context, runner, sidebarProvider, statusBarItem);
-    // Fetch initial score asynchronously without blocking activation
-    runner.getEngineeringScore().then(score => {
-        statusBarItem.text = `$(brain) DevMind: ${score}%`;
-        statusBarItem.tooltip = `DevMind Engineering Score: ${score}%\nClick to run Doctor diagnostics.`;
-    }).catch(err => {
-        console.error('Failed to get initial DevMind score:', err);
+    // Auto-Bootstrap dependencies if missing
+    const root = runner.getWorkspaceRoot();
+    if (root) {
+        const setupScript = path.join(root, 'setup-ai-project.sh');
+        const agentsDir = path.join(root, '.agents');
+        if (fs.existsSync(setupScript) && !fs.existsSync(agentsDir)) {
+            vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: "DevMind: Auto-installing CLI dependencies & context engine...",
+                cancellable: false
+            }, async (progress) => {
+                progress.report({ message: "Running project setup..." });
+                return new Promise((resolve) => {
+                    const execEnv = { ...process.env, NO_COLOR: '1', TERM: 'dumb' };
+                    child_process.exec(`echo "Y" | "${setupScript}"`, { cwd: root, env: execEnv }, async (error) => {
+                        if (error) {
+                            vscode.window.showErrorMessage(`DevMind Auto-Install Failed: ${error.message}`);
+                            resolve(false);
+                            return;
+                        }
+                        vscode.window.showInformationMessage("DevMind: Dependencies and AI context successfully installed!");
+                        sidebarProvider.refresh();
+                        try {
+                            const score = await runner.getEngineeringScore();
+                            statusBarItem.text = `$(brain) DevMind: ${score}%`;
+                            statusBarItem.tooltip = `DevMind Engineering Score: ${score}%\nClick to run Doctor diagnostics.`;
+                        }
+                        catch (err) {
+                            statusBarItem.text = '$(brain) DevMind: Ready';
+                        }
+                        resolve(true);
+                    });
+                });
+            });
+        }
+        else {
+            // Fetch initial score asynchronously without blocking activation
+            runner.getEngineeringScore().then(score => {
+                statusBarItem.text = `$(brain) DevMind: ${score}%`;
+                statusBarItem.tooltip = `DevMind Engineering Score: ${score}%\nClick to run Doctor diagnostics.`;
+            }).catch(err => {
+                console.error('Failed to get initial DevMind score:', err);
+                statusBarItem.text = '$(brain) DevMind: Ready';
+            });
+        }
+    }
+    else {
         statusBarItem.text = '$(brain) DevMind: Ready';
-    });
+    }
     // Auto Sync on Save Listener
     context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(async (document) => {
         const config = vscode.workspace.getConfiguration('devmind');

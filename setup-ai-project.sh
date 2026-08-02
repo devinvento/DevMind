@@ -971,12 +971,17 @@ build_graphify_graph() {
     if command -v graphify >/dev/null 2>&1; then
         if graphify .; then
             success "Project Graphify knowledge graph generated"
-            log "Generating interactive HTML graph visualizer (graphify-out/graph.html)..."
-            if python3 "$PROJECT_DIR/generate_graph_html.py" "$PROJECT_DIR" >/dev/null 2>&1; then
-                success "Generated HTML visualizer: graphify-out/graph.html"
-            fi
         else
-            warn "Graphify CLI returned an error. Run manually: /graphify ."
+            warn "Full Graphify extraction failed (likely no API key). Falling back to offline AST code-only update..."
+            if graphify update .; then
+                success "Project Graphify code-only graph generated successfully"
+            else
+                warn "Graphify CLI returned an error. Run manually: graphify update ."
+            fi
+        fi
+        log "Generating interactive HTML graph visualizer (graphify-out/graph.html)..."
+        if python3 "$PROJECT_DIR/generate_graph_html.py" "$PROJECT_DIR" >/dev/null 2>&1; then
+            success "Generated HTML visualizer: graphify-out/graph.html"
         fi
     else
         warn "Graphify CLI unavailable."
