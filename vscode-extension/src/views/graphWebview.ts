@@ -38,7 +38,7 @@ export class DevMindGraphWebview {
 
         const panel = vscode.window.createWebviewPanel(
             'devmindGraph',
-            'DevMind Knowledge Graph',
+            'DevMind Code Graph',
             column || vscode.ViewColumn.One,
             {
                 enableScripts: true,

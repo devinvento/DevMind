@@ -49,7 +49,7 @@ export class DevMindSidebarProvider implements vscode.TreeDataProvider<DevMindTr
             return [
                 new DevMindTreeItem('🩺 System Health & Audits', vscode.TreeItemCollapsibleState.Expanded, 'category_health', undefined, 'pulse'),
                 new DevMindTreeItem('🤖 AI Task Planner & Review', vscode.TreeItemCollapsibleState.Expanded, 'category_ai_tasks', undefined, 'robot'),
-                new DevMindTreeItem('📊 Knowledge Graph & Code Intelligence', vscode.TreeItemCollapsibleState.Collapsed, 'category_graph', undefined, 'graph'),
+                new DevMindTreeItem('📊 Code Graph & Code Intelligence', vscode.TreeItemCollapsibleState.Collapsed, 'category_graph', undefined, 'graph'),
                 new DevMindTreeItem('📜 Architecture Decisions (ADRs)', vscode.TreeItemCollapsibleState.Collapsed, 'category_adr', undefined, 'law'),
                 new DevMindTreeItem('🧠 Project Memory', vscode.TreeItemCollapsibleState.Collapsed, 'category_memory', undefined, 'circuit-board')
             ];
@@ -74,7 +74,7 @@ export class DevMindSidebarProvider implements vscode.TreeDataProvider<DevMindTr
                     'pulse'
                 ),
                 new DevMindTreeItem(
-                    'Sync AI Context & Knowledge Graph',
+                    'Sync AI Context & Code Graph',
                     vscode.TreeItemCollapsibleState.None,
                     'action_sync',
                     { command: 'devmind.sync', title: 'Sync AI Context' },
@@ -130,7 +130,7 @@ export class DevMindSidebarProvider implements vscode.TreeDataProvider<DevMindTr
                     hasGraph ? 'graphify-out/graph.json' : 'Run devmind sync'
                 ),
                 new DevMindTreeItem(
-                    'Open Interactive Knowledge Graph',
+                    'Open Interactive Code Graph',
                     vscode.TreeItemCollapsibleState.None,
                     'action_open_graph',
                     { command: 'devmind.openGraph', title: 'Open Graph' },

@@ -66,7 +66,7 @@ class DevMindGraphWebview {
             }
             return;
         }
-        const panel = vscode.window.createWebviewPanel('devmindGraph', 'DevMind Knowledge Graph', column || vscode.ViewColumn.One, {
+        const panel = vscode.window.createWebviewPanel('devmindGraph', 'DevMind Code Graph', column || vscode.ViewColumn.One, {
             enableScripts: true,
             localResourceRoots: [
                 vscode.Uri.file(path.join(workspaceRoot, 'graphify-out'))

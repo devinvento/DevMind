@@ -47,3 +47,13 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# DevMind AI Project Operating System
+generate_graph_html.py
+bin/devmind
+pytest.ini
+tests/test_example.py
+phpunit.xml
+tests/ExampleTest.php
+jest.config.js
+tests/example.test.js

@@ -4,7 +4,7 @@
 
 # 🚀 DevMind Enterprise AI Operating System & CLI Suite (v3.0.0)
 
-An intelligent, developer-friendly **AI Engineering Operating System & Unified CLI Tool (`devmind`)**. It unifies **Everything Claude Code (ECC)**, **Graphify Knowledge Graphs**, **Specialized Agent Personas**, **Operational Workflows**, **Git & Database Intelligence**, **Project Memory Layer**, **ADR Management**, and **Antigravity IDE MCP Integration** into a single cohesive operating framework.
+An intelligent, developer-friendly **AI Engineering Operating System & Unified CLI Tool (`devmind`)**. It unifies **Everything Claude Code (ECC)**, **Graphify Code Graphs**, **Specialized Agent Personas**, **Operational Workflows**, **Git & Database Intelligence**, **Project Memory Layer**, **ADR Management**, and **Antigravity IDE MCP Integration** into a single cohesive operating framework.
 
 ---
 
@@ -36,7 +36,7 @@ flowchart TD
         Step8 --> Step9["9. Create Master Operating Manual (.agents/AGENTS.md)"]
     end
 
-    subgraph Phase4 ["Phase 4: Knowledge Graph, MCP & CLI Diagnostics"]
+    subgraph Phase4 ["Phase 4: Code Graph, MCP & CLI Diagnostics"]
         Step9 --> Step10["10. Build Graphify Graph & HTML Visualizer + Configure Antigravity MCP"]
         Step10 --> Step11["11. Run devmind doctor & Engineering Score (0-100%)"]
     end
@@ -62,7 +62,7 @@ sequenceDiagram
     CLI->>Graphify: Query graph.json (Downstream consumers & Upstream dependencies)
     CLI-->>VSCode: Terminal output (Matched node, dependents, upstream imports)
     VSCode->>Webview: Launch `DevMindGraphWebview` with query focus
-    Webview-->>User: Interactive Vis.js 2D Knowledge Graph filtered & focused on node
+    Webview-->>User: Interactive Vis.js 2D Code Graph filtered & focused on node
 ```
 
 ---
@@ -77,7 +77,7 @@ The native **DevMind VS Code Extension** (`devmind-vscode`) integrates AI intell
 +------------------------------------+--------------------------------------------------+
 | [DevMind OS Sidebar]               |  [graphify-out/graph.html]                       |
 |                                    |  +--------------------------------------------+  |
-|  🩺 System Health & Score          |  | 🧠 DevMind Knowledge Graph v2.0  [Search]   |  |
+|  🩺 System Health & Score          |  | 🧠 DevMind Code Graph v2.0  [Search]   |  |
 |     ├── Engineering Score: 89%     |  |                                            |  |
 |     ├── Run Doctor Diagnostics     |  |   (Node A) ---> [Target File] ---> (Node B) |  |
 |     └── Sync AI Context            |  |                     |                      |  |
@@ -91,7 +91,7 @@ The native **DevMind VS Code Extension** (`devmind-vscode`) integrates AI intell
 |     ├── + Create New ADR           |  Matched Node: setup-ai-project.sh               |
 |     └── 001-initial-arch.md        |  Direct Consumers:                               |
 |                                    |    └── setup_ai_project_build_graphify_graph    |
-|  📊 Knowledge Graph & Impact       |  ============================================    |
+|  📊 Code Graph & Impact            |  ============================================    |
 |     ├── Graphify Index: Active     |                                                  |
 |     ├── Open Interactive Graph     |                                                  |
 |     └── Analyze File Impact...     |                                                  |

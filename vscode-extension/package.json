@@ -48,7 +48,7 @@
       },
       {
         "command": "devmind.sync",
-        "title": "DevMind: Sync AI Context & Knowledge Graph",
+        "title": "DevMind: Sync AI Context & Code Graph",
         "icon": "$(sync)"
       },
       {
@@ -93,7 +93,7 @@
       },
       {
         "command": "devmind.openGraph",
-        "title": "DevMind: Open Knowledge Graph",
+        "title": "DevMind: Open Code Graph",
         "icon": "$(graph)"
       }
     ],

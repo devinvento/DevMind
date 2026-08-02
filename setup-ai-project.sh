@@ -17,7 +17,7 @@ set -Eeuo pipefail
 #   - Standard Operating Workflows (.agents/workflows/)
 #   - Project-Specific Domain Rules (.agents/rules/)
 #   - Powerful AI Operating Manual (.agents/AGENTS.md)
-#   - Graphify Knowledge Graph & Antigravity MCP Server Integration
+#   - Graphify Code Graph & Antigravity MCP Server Integration
 #   - Multi-Dimensional Engineering Score & Diagnostic Suite (0-100%)
 #
 # Usage:
@@ -264,6 +264,10 @@ install_devmind_cli() {
         if [[ -f "$SCRIPT_SOURCE_DIR/generate_graph_html.py" ]]; then
             cp "$SCRIPT_SOURCE_DIR/generate_graph_html.py" "$PROJECT_DIR/generate_graph_html.py"
         fi
+        if [[ -f "$SCRIPT_SOURCE_DIR/setup-ai-project.sh" ]]; then
+            cp "$SCRIPT_SOURCE_DIR/setup-ai-project.sh" "$PROJECT_DIR/setup-ai-project.sh"
+            chmod +x "$PROJECT_DIR/setup-ai-project.sh"
+        fi
     fi
 
     local bin_path="$PROJECT_DIR/bin/devmind"
@@ -311,7 +315,7 @@ detect_project_stack() {
     if [[ -f "$PROJECT_DIR/artisan" ]]; then
         PROJECT_TYPE="PHP / Laravel"
         stacks+=("PHP" "Laravel")
-    elif [[ -f "$PROJECT_DIR/spark" ]] || grep -qi "codeigniter" "$PROJECT_DIR/composer.json" 2>/dev/null; then
+    elif [[ -f "$PROJECT_DIR/spark" ]] || [[ -f "$PROJECT_DIR/application/config/config.php" ]] || [[ -f "$PROJECT_DIR/system/core/CodeIgniter.php" ]] || grep -qi "codeigniter" "$PROJECT_DIR/composer.json" 2>/dev/null; then
         PROJECT_TYPE="PHP / CodeIgniter"
         stacks+=("PHP" "CodeIgniter")
     elif [[ -f "$PROJECT_DIR/composer.json" ]]; then
@@ -396,6 +400,7 @@ detect_database() {
 
     local dbs=()
 
+    # 1. Environment files (.env)
     if [[ -f "$PROJECT_DIR/.env" ]]; then
         if grep -qi "DB_CONNECTION=mysql" "$PROJECT_DIR/.env" 2>/dev/null || grep -qi "mysql" "$PROJECT_DIR/.env" 2>/dev/null; then
             dbs+=("MySQL / MariaDB")
@@ -408,16 +413,133 @@ detect_database() {
         fi
     fi
 
+    # 2. SQLite file checks
     if find "$PROJECT_DIR" -maxdepth 3 -name "*.sqlite" -o -name "*.sqlite3" -o -name "*.db" 2>/dev/null | grep -q .; then
-        dbs+=("SQLite Database File")
+        dbs+=("SQLite")
     fi
 
+    # 3. PHP / Laravel database configuration
     if [[ -f "$PROJECT_DIR/config/database.php" ]]; then
-        dbs+=("PHP Database Abstraction")
+        local laravel_driver
+        laravel_driver=$(grep -oE "'default'\s*=>\s*env\(\s*['\"]DB_CONNECTION['\"]\s*,\s*['\"][^'\"]+['\"]" "$PROJECT_DIR/config/database.php" 2>/dev/null | head -n 1 | sed -E "s/.*,\s*['\"]([^'\"]+)['\"].*/\1/" || true)
+        if [[ -n "$laravel_driver" ]]; then
+            if [[ "$laravel_driver" == *"mysql"* ]]; then
+                dbs+=("MySQL / MariaDB")
+            elif [[ "$laravel_driver" == *"postgres"* || "$laravel_driver" == *"pgsql"* ]]; then
+                dbs+=("PostgreSQL")
+            elif [[ "$laravel_driver" == *"sqlite"* ]]; then
+                dbs+=("SQLite")
+            fi
+        else
+            dbs+=("PHP Database Abstraction")
+        fi
+    fi
+
+    # 4. CodeIgniter 3 database configuration
+    if [[ -f "$PROJECT_DIR/application/config/database.php" ]]; then
+        local ci_driver
+        ci_driver=$(grep -oE "'dbdriver'\s*\]\s*=\s*['\"][^'\"]+['\"]" "$PROJECT_DIR/application/config/database.php" 2>/dev/null | head -n 1 | sed -E "s/.*=\s*['\"]([^'\"]+)['\"].*/\1/" || true)
+        if [[ -n "$ci_driver" ]]; then
+            if [[ "$ci_driver" == *"mysql"* ]]; then
+                dbs+=("MySQL / MariaDB")
+            elif [[ "$ci_driver" == *"postgre"* || "$ci_driver" == *"pgsql"* ]]; then
+                dbs+=("PostgreSQL")
+            elif [[ "$ci_driver" == *"sqlite"* ]]; then
+                dbs+=("SQLite")
+            else
+                dbs+=("CodeIgniter DB ($ci_driver)")
+            fi
+        else
+            dbs+=("PHP Database Abstraction")
+        fi
+    fi
+
+    # 5. Python / Django database configuration
+    local django_settings
+    django_settings=$(find "$PROJECT_DIR" -maxdepth 4 -name "settings.py" 2>/dev/null | head -n 1 || true)
+    if [[ -n "$django_settings" ]]; then
+        if grep -q "django.db.backends.postgresql" "$django_settings" 2>/dev/null; then
+            dbs+=("PostgreSQL")
+        fi
+        if grep -q "django.db.backends.mysql" "$django_settings" 2>/dev/null; then
+            dbs+=("MySQL / MariaDB")
+        fi
+        if grep -q "django.db.backends.sqlite3" "$django_settings" 2>/dev/null; then
+            dbs+=("SQLite")
+        fi
+    fi
+
+    # 6. Java / Spring Boot configurations
+    local spring_configs
+    spring_configs=$(find "$PROJECT_DIR" -maxdepth 4 -name "application.properties" -o -name "application.yml" -o -name "application.yaml" 2>/dev/null || true)
+    if [[ -n "$spring_configs" ]]; then
+        if echo "$spring_configs" | xargs grep -qi "mysql" 2>/dev/null; then
+            dbs+=("MySQL / MariaDB")
+        fi
+        if echo "$spring_configs" | xargs grep -qi "postgresql" 2>/dev/null; then
+            dbs+=("PostgreSQL")
+        fi
+        if echo "$spring_configs" | xargs grep -qi "jdbc:h2" 2>/dev/null; then
+            dbs+=("H2 Database")
+        fi
+        if echo "$spring_configs" | xargs grep -qi "sqlite" 2>/dev/null; then
+            dbs+=("SQLite")
+        fi
+    fi
+
+    # 7. Node.js dependencies
+    if [[ -f "$PROJECT_DIR/package.json" ]]; then
+        if grep -qE '"(mysql|mysql2)"\s*:' "$PROJECT_DIR/package.json" 2>/dev/null; then
+            dbs+=("MySQL / MariaDB")
+        fi
+        if grep -qE '"(pg|pg-promise)"\s*:' "$PROJECT_DIR/package.json" 2>/dev/null; then
+            dbs+=("PostgreSQL")
+        fi
+        if grep -qE '"(sqlite3|better-sqlite3)"\s*:' "$PROJECT_DIR/package.json" 2>/dev/null; then
+            dbs+=("SQLite")
+        fi
+        if grep -qE '"(mongodb|mongoose)"\s*:' "$PROJECT_DIR/package.json" 2>/dev/null; then
+            dbs+=("MongoDB")
+        fi
+        if grep -qE '"(redis|ioredis)"\s*:' "$PROJECT_DIR/package.json" 2>/dev/null; then
+            dbs+=("Redis")
+        fi
+    fi
+
+    # 8. Python dependencies (requirements.txt / pyproject.toml)
+    local py_deps=""
+    if [[ -f "$PROJECT_DIR/requirements.txt" ]]; then
+        py_deps+=$(cat "$PROJECT_DIR/requirements.txt" 2>/dev/null)
+    fi
+    if [[ -f "$PROJECT_DIR/pyproject.toml" ]]; then
+        py_deps+=$(cat "$PROJECT_DIR/pyproject.toml" 2>/dev/null)
+    fi
+    if [[ -n "$py_deps" ]]; then
+        if echo "$py_deps" | grep -qiE "psycopg|asyncpg" 2>/dev/null; then
+            dbs+=("PostgreSQL")
+        fi
+        if echo "$py_deps" | grep -qiE "mysqlclient|pymysql" 2>/dev/null; then
+            dbs+=("MySQL / MariaDB")
+        fi
+        if echo "$py_deps" | grep -qiE "pymongo|motor" 2>/dev/null; then
+            dbs+=("MongoDB")
+        fi
+        if echo "$py_deps" | grep -qiE "redis" 2>/dev/null; then
+            dbs+=("Redis")
+        fi
+    fi
+
+    # 9. Frappe / ERPNext sites config
+    if [[ -f "$PROJECT_DIR/sites/common_site_config.json" ]]; then
+        if grep -qi "db_type.*postgres" "$PROJECT_DIR/sites/common_site_config.json" 2>/dev/null; then
+            dbs+=("PostgreSQL")
+        else
+            dbs+=("MySQL / MariaDB")
+        fi
     fi
 
     if [[ ${#dbs[@]} -gt 0 ]]; then
-        DB_ENGINE="${dbs[*]}"
+        DB_ENGINE=$(printf "%s\n" "${dbs[@]}" | sort -u | tr '\n' ' ' | xargs || true)
         success "Detected Database: ${CYAN}$DB_ENGINE${NC}"
     else
         DB_ENGINE="None explicitly configured"
@@ -432,6 +554,14 @@ detect_database() {
 generate_database_docs() {
     local doc="$PROJECT_DIR/DATABASE.md"
     log "Generating Database Intelligence Document ($doc)..."
+
+    local schema_hints
+    schema_hints=$(find "$PROJECT_DIR" -maxdepth 4 -not -path '*/system/*' -not -path '*/vendor/*' -not -path '*/.git/*' -not -path '*/node_modules/*' \( -name "*migration*" -o -name "*schema*" -o -name "*doctype*" -o -name "*.sql" \) 2>/dev/null || true)
+    if [[ -n "$schema_hints" ]]; then
+        schema_hints=$(echo "$schema_hints" | head -n 15 | sed 's/^/- /')
+    else
+        schema_hints="- None detected"
+    fi
 
     cat > "$doc" <<EOF
 # Database Architecture & Schema Context
@@ -455,7 +585,7 @@ Target Project: $PROJECT_DIR
    - Use parameterized queries or ORM bindings to prevent SQL Injection.
 
 ## Schema Hints & Tables
-$(find "$PROJECT_DIR" -maxdepth 4 -name "*migration*" -o -name "*schema*" -o -name "*doctype*" 2>/dev/null | head -n 15 | sed 's/^/- /')
+$schema_hints
 EOF
     success "Generated DATABASE.md"
 }
@@ -964,7 +1094,7 @@ EOF
 
 build_graphify_graph() {
     cd "$PROJECT_DIR"
-    log "Building Graphify knowledge graph..."
+    log "Building Graphify code graph..."
 
     if [[ -f "$GRAPHIFY_OUTPUT_DIR/graph.json" ]]; then
         warn "Existing Graphify graph detected."
@@ -982,7 +1112,7 @@ build_graphify_graph() {
 
     if command -v graphify >/dev/null 2>&1; then
         if graphify .; then
-            success "Project Graphify knowledge graph generated"
+            success "Project Graphify code graph generated"
         else
             warn "Full Graphify extraction failed (likely no API key). Falling back to offline AST code-only update..."
             if graphify update .; then
