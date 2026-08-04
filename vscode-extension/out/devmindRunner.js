@@ -61,6 +61,11 @@ class DevMindRunner {
         if (fs.existsSync(localBin)) {
             return `python3 "${localBin}"`;
         }
+        // Check ~/.local/bin/devmind
+        const homeBin = path.join(process.env.HOME || '', '.local', 'bin', 'devmind');
+        if (fs.existsSync(homeBin)) {
+            return `python3 "${homeBin}"`;
+        }
         // Fallback to system command
         return 'devmind';
     }

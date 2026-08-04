@@ -794,22 +794,55 @@ setup_git_hooks() {
         
         # Check if the hook already exists
         if [[ -f "$hook_file" ]]; then
-            # If it exists, append our command if not already present
             if ! grep -q "devmind plan" "$hook_file"; then
                 cat >> "$hook_file" <<'EOF'
 
 # DevMind Auto-Update Hook
 COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1)
-if [[ "$COMMIT_MSG" =~ ^(feat|feature|refactor|fix) ]]; then
-    if [[ -f "./bin/devmind" ]]; then
-        python3 "./bin/devmind" plan "$COMMIT_MSG" >/dev/null 2>&1
+COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+if [[ -f "./bin/devmind" ]]; then
+    if [[ "$COMMIT_MSG" =~ ^[Rr]evert ]]; then
+        python3 "./bin/devmind" plan "REVERT [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+    elif [[ "$COMMIT_MSG" =~ ^(feat|feature) ]]; then
+        python3 "./bin/devmind" plan "FEATURE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+    elif [[ "$COMMIT_MSG" =~ ^refactor ]]; then
+        python3 "./bin/devmind" plan "REFACTOR [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+    elif [[ "$COMMIT_MSG" =~ ^fix ]]; then
+        python3 "./bin/devmind" plan "FIX [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+    else
+        python3 "./bin/devmind" plan "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
     fi
 fi
 EOF
                 chmod +x "$hook_file"
                 success "Appended DevMind hook to existing post-commit hook: $hook_file"
             else
-                success "DevMind hook already present in post-commit hook: $hook_file"
+                cat > "$hook_file" <<'EOF'
+#!/usr/bin/env bash
+# DevMind Git Post-Commit Hook
+
+# Get the latest commit message and hash
+COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1)
+COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
+if [[ -f "./bin/devmind" ]]; then
+    # Route by commit type
+    if [[ "$COMMIT_MSG" =~ ^[Rr]evert ]]; then
+        python3 "./bin/devmind" plan "REVERT [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+    elif [[ "$COMMIT_MSG" =~ ^(feat|feature) ]]; then
+        python3 "./bin/devmind" plan "FEATURE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+    elif [[ "$COMMIT_MSG" =~ ^refactor ]]; then
+        python3 "./bin/devmind" plan "REFACTOR [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+    elif [[ "$COMMIT_MSG" =~ ^fix ]]; then
+        python3 "./bin/devmind" plan "FIX [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+    else
+        # Chores, docs, style, and tests go to lightweight log
+        python3 "./bin/devmind" plan "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+    fi
+fi
+EOF
+                chmod +x "$hook_file"
+                success "Updated DevMind hook in post-commit hook: $hook_file"
             fi
         else
             # Create a new hook
@@ -817,13 +850,23 @@ EOF
 #!/usr/bin/env bash
 # DevMind Git Post-Commit Hook
 
-# Get the latest commit message
+# Get the latest commit message and hash
 COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1)
+COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
-# Only auto-document features, refactors, and fixes
-if [[ "$COMMIT_MSG" =~ ^(feat|feature|refactor|fix) ]]; then
-    if [[ -f "./bin/devmind" ]]; then
-        python3 "./bin/devmind" plan "$COMMIT_MSG" >/dev/null 2>&1
+if [[ -f "./bin/devmind" ]]; then
+    # Route by commit type
+    if [[ "$COMMIT_MSG" =~ ^[Rr]evert ]]; then
+        python3 "./bin/devmind" plan "REVERT [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+    elif [[ "$COMMIT_MSG" =~ ^(feat|feature) ]]; then
+        python3 "./bin/devmind" plan "FEATURE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+    elif [[ "$COMMIT_MSG" =~ ^refactor ]]; then
+        python3 "./bin/devmind" plan "REFACTOR [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+    elif [[ "$COMMIT_MSG" =~ ^fix ]]; then
+        python3 "./bin/devmind" plan "FIX [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+    else
+        # Chores, docs, style, and tests go to lightweight log
+        python3 "./bin/devmind" plan "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
     fi
 fi
 EOF

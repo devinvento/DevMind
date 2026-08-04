@@ -41,7 +41,9 @@ echo -e "${CYAN}====================================================${NC}"
 echo -e "${CYAN}   DevMind Extension Rebuilder & Reinstallation Suite${NC}"
 echo -e "${CYAN}====================================================${NC}"
 
-PROJECT_DIR="/var/www/html/DevMind"
+# Dynamically determine project directory from script location or optional CLI argument
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="${1:-$SCRIPT_DIR}"
 cd "$PROJECT_DIR"
 
 # 1. Cleanup Root-Owned Backups (Requires sudo)
@@ -98,6 +100,13 @@ fi
 # Clean up temp Node folder
 log "Cleaning up temporary Node files..."
 rm -rf "$NODE_TEMP_DIR"
+
+# Restore DevMind CLI link in ~/.local/bin
+log "Re-linking DevMind CLI to ~/.local/bin/devmind..."
+mkdir -p "$HOME/.local/bin"
+chmod +x "$PROJECT_DIR/bin/devmind"
+ln -sf "$PROJECT_DIR/bin/devmind" "$HOME/.local/bin/devmind"
+success "DevMind CLI re-linked to $HOME/.local/bin/devmind"
 
 echo -e "${CYAN}====================================================${NC}"
 echo -e "${GREEN}   DevMind VSIX Rebuilt Successfully! 🎉${NC}"
