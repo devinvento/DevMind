@@ -17,7 +17,7 @@ set -Eeuo pipefail
 #   - Standard Operating Workflows (.agents/workflows/)
 #   - Project-Specific Domain Rules (.agents/rules/)
 #   - Powerful AI Operating Manual (.agents/AGENTS.md)
-#   - Graphify Code Graph & Antigravity MCP Server Integration
+#   - Graphify Knowledge Graph & Antigravity MCP Server Integration
 #   - Multi-Dimensional Engineering Score & Diagnostic Suite (0-100%)
 #
 # Usage:
@@ -260,13 +260,10 @@ install_devmind_cli() {
         mkdir -p "$PROJECT_DIR/bin"
         if [[ -f "$SCRIPT_SOURCE_DIR/bin/devmind" ]]; then
             cp "$SCRIPT_SOURCE_DIR/bin/devmind" "$PROJECT_DIR/bin/devmind"
+            sed -i "s|@@DEVMIND_SOURCE_DIR@@|$SCRIPT_SOURCE_DIR|g" "$PROJECT_DIR/bin/devmind"
         fi
         if [[ -f "$SCRIPT_SOURCE_DIR/generate_graph_html.py" ]]; then
             cp "$SCRIPT_SOURCE_DIR/generate_graph_html.py" "$PROJECT_DIR/generate_graph_html.py"
-        fi
-        if [[ -f "$SCRIPT_SOURCE_DIR/setup-ai-project.sh" ]]; then
-            cp "$SCRIPT_SOURCE_DIR/setup-ai-project.sh" "$PROJECT_DIR/setup-ai-project.sh"
-            chmod +x "$PROJECT_DIR/setup-ai-project.sh"
         fi
     fi
 
@@ -756,12 +753,86 @@ setup_project_memory_and_adr() {
     mkdir -p "$DEVMIND_MEMORY_DIR"
     mkdir -p "$ADR_DIR"
 
-    [[ -f "$DEVMIND_MEMORY_DIR/decisions.md" ]] || touch "$DEVMIND_MEMORY_DIR/decisions.md"
+    if [[ ! -s "$DEVMIND_MEMORY_DIR/decisions.md" ]]; then
+        cat > "$DEVMIND_MEMORY_DIR/decisions.md" <<'EOF'
+# Architecture & Design Decisions
+
+This document records the major architectural choices made in the project.
+
+## Decision Log
+
+### 1. Unified DevMind CLI & Operating Framework
+- **Date**: 2026-08-01
+- **Decision**: Implemented `devmind` CLI v3.0.0 for environment diagnostics, context refresh (`devmind sync`), task planning, impact analysis, security auditing, and ADR tracking.
+- **Reason**: Standardizes AI context retrieval and enforces engineering safety guardrails.
+- **Status**: Accepted
+EOF
+    fi
+
     [[ -f "$DEVMIND_MEMORY_DIR/known-issues.md" ]] || touch "$DEVMIND_MEMORY_DIR/known-issues.md"
     [[ -f "$DEVMIND_MEMORY_DIR/failed-attempts.md" ]] || touch "$DEVMIND_MEMORY_DIR/failed-attempts.md"
-    [[ -f "$DEVMIND_MEMORY_DIR/project-history.md" ]] || touch "$DEVMIND_MEMORY_DIR/project-history.md"
+
+    if [[ ! -s "$DEVMIND_MEMORY_DIR/project-history.md" ]]; then
+        cat > "$DEVMIND_MEMORY_DIR/project-history.md" <<'EOF'
+# Project Evolution History
+
+This document records the chronological history of feature additions, refactoring, and major system changes.
+
+## Evolution Log
+EOF
+    fi
 
     success "Configured Project Memory Layer (.devmind/memory/) & ADR Manager (docs/adr/)"
+}
+
+setup_git_hooks() {
+    log "Configuring automated Git post-commit hooks..."
+    local git_dir="$PROJECT_DIR/.git"
+    if [[ -d "$git_dir" ]]; then
+        local hook_file="$git_dir/hooks/post-commit"
+        mkdir -p "$git_dir/hooks"
+        
+        # Check if the hook already exists
+        if [[ -f "$hook_file" ]]; then
+            # If it exists, append our command if not already present
+            if ! grep -q "devmind plan" "$hook_file"; then
+                cat >> "$hook_file" <<'EOF'
+
+# DevMind Auto-Update Hook
+COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1)
+if [[ "$COMMIT_MSG" =~ ^(feat|feature|refactor|fix) ]]; then
+    if [[ -f "./bin/devmind" ]]; then
+        python3 "./bin/devmind" plan "$COMMIT_MSG" >/dev/null 2>&1
+    fi
+fi
+EOF
+                chmod +x "$hook_file"
+                success "Appended DevMind hook to existing post-commit hook: $hook_file"
+            else
+                success "DevMind hook already present in post-commit hook: $hook_file"
+            fi
+        else
+            # Create a new hook
+            cat > "$hook_file" <<'EOF'
+#!/usr/bin/env bash
+# DevMind Git Post-Commit Hook
+
+# Get the latest commit message
+COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1)
+
+# Only auto-document features, refactors, and fixes
+if [[ "$COMMIT_MSG" =~ ^(feat|feature|refactor|fix) ]]; then
+    if [[ -f "./bin/devmind" ]]; then
+        python3 "./bin/devmind" plan "$COMMIT_MSG" >/dev/null 2>&1
+    fi
+fi
+EOF
+            chmod +x "$hook_file"
+            success "Configured automated Git post-commit hook: $hook_file"
+        fi
+    else
+        log_warn "No .git directory found at target path. Skipping Git hook configuration."
+    fi
 }
 
 ###############################################################################
@@ -870,7 +941,8 @@ generate_workflows() {
 flowchart TD
     Req["Understand Requirement"] --> Graph["Graphify Analysis"]
     Graph --> Plan["Create Implementation Plan"]
-    Plan --> Approve{"User Approval"}
+    Plan --> ADR["Create ADR Record"]
+    ADR --> Approve{"User Approval"}
     Approve -- Yes --> TDD["Write Tests (TDD)"]
     TDD --> Code["Implement Feature"]
     Code --> Test["Run Tests & Verification"]
@@ -881,9 +953,10 @@ flowchart TD
 ## Execution Steps:
 1. Understand the goal & search for existing implementations.
 2. Inspect codebase dependencies with Graphify.
-3. Present an implementation plan to the user.
-4. Implement using small, safe changes.
-5. Verify test pass and perform code review.
+3. Automatically create a new Architecture Decision Record (ADR) under `docs/adr/` (e.g. by running `devmind adr create "<title>"` or via VS Code sidebar) to document the decision context.
+4. Present an implementation plan to the user.
+5. Implement using small, safe changes.
+6. Verify test pass and perform code review.
 EOF
 
     # Bug Fix Workflow
@@ -959,6 +1032,7 @@ generate_rules() {
 - Use modular design pattern.
 - Decouple controllers from business logic; use Service layers.
 - Do not modify core framework files directly.
+- Automatically create an Architecture Decision Record (ADR) under docs/adr/ when implementing new features or planning major changes.
 EOF
 
     cat > "$RULES_DIR/database.md" <<'EOF'
@@ -1113,7 +1187,7 @@ EOF
 
 build_graphify_graph() {
     cd "$PROJECT_DIR"
-    log "Building Graphify code graph..."
+    log "Building Graphify knowledge graph..."
 
     if [[ -f "$GRAPHIFY_OUTPUT_DIR/graph.json" ]]; then
         warn "Existing Graphify graph detected."
@@ -1131,11 +1205,11 @@ build_graphify_graph() {
 
     if command -v graphify >/dev/null 2>&1; then
         if graphify .; then
-            success "Project Graphify code graph generated"
+            success "Project Graphify knowledge graph generated"
         else
             warn "Full Graphify extraction failed (likely no API key). Falling back to offline AST code-only update..."
             if graphify update .; then
-                success "Project Graphify code-only graph generated successfully"
+                success "Project Graphify knowledge-only graph generated successfully"
             else
                 warn "Graphify CLI returned an error. Run manually: graphify update ."
             fi
@@ -1339,6 +1413,7 @@ main() {
     generate_security_docs
     generate_testing_scaffold
     setup_project_memory_and_adr
+    setup_git_hooks
     update_gitignore
 
     # 5. Agent Personas & Workflows Generator

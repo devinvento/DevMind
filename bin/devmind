@@ -19,10 +19,14 @@ import sys
 import os
 import json
 import subprocess
-import shutil
 import re
 from pathlib import Path
 from datetime import datetime
+
+# DevMind source directory (configured dynamically during setup)
+DEVMIND_SOURCE_DIR = "@@DEVMIND_SOURCE_DIR@@"
+if DEVMIND_SOURCE_DIR.startswith("@@"):
+    DEVMIND_SOURCE_DIR = str(Path(__file__).resolve().parent.parent)
 
 # Color Constants
 CYAN = "\033[0;36m"
@@ -126,7 +130,7 @@ def cmd_sync(project_dir):
         log_warn("No LLM API key detected or Graphify failed. Falling back to local/offline AST code-only index...")
         rc_update, out_update, err_update = run_cmd("graphify update .", cwd=project_dir)
         if rc_update == 0:
-            log_ok("Graphify code graph updated successfully (offline AST index).")
+            log_ok("Graphify knowledge graph updated successfully (offline AST index).")
         else:
             log_warn(f"Graphify rebuild warning: {err_update or out_update}")
 
@@ -138,6 +142,9 @@ def cmd_sync(project_dir):
 
     # 3. Update Intelligence Docs
     setup_script = Path(__file__).resolve().parent.parent / "setup-ai-project.sh"
+    if not setup_script.exists():
+        setup_script = Path(DEVMIND_SOURCE_DIR) / "setup-ai-project.sh"
+        
     if setup_script.exists():
         rc, out, err = run_cmd(f"\"{setup_script}\" {project_dir}", cwd=project_dir)
         if rc == 0:
@@ -169,7 +176,51 @@ def cmd_plan(project_dir, task):
     print("  - Payload validation unit test")
     print("  - Edge case & rate-limiting validation")
     print(f"{BOLD}{CYAN}===================================================={NC}\n")
+    
+    # Automatically create a corresponding Architecture Decision Record (ADR)
+    cmd_adr_create(project_dir, f"Implement Feature: {task}")
 
+    # Automatically update the Project Memory Layer (.devmind/memory/)
+    memory_dir = project_dir / ".devmind" / "memory"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+
+    decisions_file = memory_dir / "decisions.md"
+    if not decisions_file.exists() or decisions_file.stat().st_size == 0:
+        decisions_file.write_text("# Architecture & Design Decisions\n\nThis document records the major architectural choices made in the project.\n\n## Decision Log\n\n### 1. Unified DevMind CLI & Operating Framework\n- **Date**: 2026-08-01\n- **Decision**: Implemented `devmind` CLI v3.0.0 for environment diagnostics, context refresh (`devmind sync`), task planning, impact analysis, security auditing, and ADR tracking.\n- **Reason**: Standardizes AI context retrieval and enforces engineering safety guardrails.\n- **Status**: Accepted\n", encoding="utf-8")
+    try:
+        content = decisions_file.read_text(encoding="utf-8")
+    except Exception:
+        content = ""
+
+    if f"Implement Feature: {task}" in content:
+        log_info(f"Decision already logged in decisions.md for task: {task}")
+    else:
+        decisions = re.findall(r'^###\s+(\d+)\.', content, re.MULTILINE)
+        next_num = max(int(d) for d in decisions) + 1 if decisions else 1
+        today = datetime.now().strftime('%Y-%m-%d')
+        new_decision = f"\n### {next_num}. Implement Feature: {task}\n- **Date**: {today}\n- **Decision**: Design and implementation plan generated for task: {task}\n- **Reason**: Automatically logged during feature planning command execution.\n- **Status**: Proposed\n"
+
+        with decisions_file.open("a", encoding="utf-8") as f:
+            f.write(new_decision)
+        log_ok("Updated Memory Log: .devmind/memory/decisions.md")
+
+    history_file = memory_dir / "project-history.md"
+    if not history_file.exists() or history_file.stat().st_size == 0:
+        history_file.write_text("# Project Evolution History\n\nThis document records the chronological history of feature additions, refactoring, and major system changes.\n\n## Evolution Log\n", encoding="utf-8")
+
+    try:
+        hist_content = history_file.read_text(encoding="utf-8")
+    except Exception:
+        hist_content = ""
+
+    if f"Planned Feature: {task}" in hist_content:
+        log_info(f"Evolution log already updated in project-history.md for task: {task}")
+    else:
+        today = datetime.now().strftime('%Y-%m-%d')
+        new_event = f"\n### [{today}] Planned Feature: {task}\n- **Goal**: {task}\n- **Status**: Planned\n"
+        with history_file.open("a", encoding="utf-8") as f:
+            f.write(new_event)
+        log_ok("Updated Memory Log: .devmind/memory/project-history.md")
 def cmd_impact(project_dir, file_path):
     print(f"\n{BOLD}{CYAN}===================================================={NC}")
     print(f"{BOLD}{CYAN}          DEVMIND IMPACT ANALYSIS ENGINE            {NC}")
@@ -333,14 +384,18 @@ def cmd_review(project_dir):
         log_ok("Working tree clean. No uncommitted diffs to review.")
 
     print(f"\n{BOLD}{CYAN}===================================================={NC}\n")
-
 def cmd_adr_create(project_dir, title):
     adr_dir = project_dir / "docs" / "adr"
     adr_dir.mkdir(parents=True, exist_ok=True)
 
-    existing = list(adr_dir.glob("*.md"))
-    seq = len(existing) + 1
     slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')
+    existing = list(adr_dir.glob("*.md"))
+    for f in existing:
+        if f.name.endswith(f"-{slug}.md") or f.name == f"{slug}.md":
+            log_info(f"ADR already exists: docs/adr/{f.name}")
+            return
+
+    seq = len(existing) + 1
     filename = f"{seq:03d}-{slug}.md"
     filepath = adr_dir / filename
 

@@ -85,7 +85,7 @@ class DevMindSidebarProvider {
             return [
                 new DevMindTreeItem('🩺 System Health & Audits', vscode.TreeItemCollapsibleState.Expanded, 'category_health', undefined, 'pulse'),
                 new DevMindTreeItem('🤖 AI Task Planner & Review', vscode.TreeItemCollapsibleState.Expanded, 'category_ai_tasks', undefined, 'robot'),
-                new DevMindTreeItem('📊 Code Graph & Code Intelligence', vscode.TreeItemCollapsibleState.Collapsed, 'category_graph', undefined, 'graph'),
+                new DevMindTreeItem('📊 Knowledge Graph & Code Intelligence', vscode.TreeItemCollapsibleState.Collapsed, 'category_graph', undefined, 'graph'),
                 new DevMindTreeItem('📜 Architecture Decisions (ADRs)', vscode.TreeItemCollapsibleState.Collapsed, 'category_adr', undefined, 'law'),
                 new DevMindTreeItem('🧠 Project Memory', vscode.TreeItemCollapsibleState.Collapsed, 'category_memory', undefined, 'circuit-board')
             ];
@@ -95,7 +95,7 @@ class DevMindSidebarProvider {
             return [
                 new DevMindTreeItem(`Engineering Score: ${score}%`, vscode.TreeItemCollapsibleState.None, 'doctor_score', { command: 'devmind.doctor', title: 'Run Doctor Diagnostics' }, 'pass-filled', score >= 80 ? 'Optimal' : 'Needs Sync'),
                 new DevMindTreeItem('Run Full Doctor Diagnostics', vscode.TreeItemCollapsibleState.None, 'action_doctor', { command: 'devmind.doctor', title: 'Run Doctor' }, 'pulse'),
-                new DevMindTreeItem('Sync AI Context & Code Graph', vscode.TreeItemCollapsibleState.None, 'action_sync', { command: 'devmind.sync', title: 'Sync AI Context' }, 'sync'),
+                new DevMindTreeItem('Sync AI Context & Knowledge Graph', vscode.TreeItemCollapsibleState.None, 'action_sync', { command: 'devmind.sync', title: 'Sync AI Context' }, 'sync'),
                 new DevMindTreeItem('Audit Security Vulnerabilities', vscode.TreeItemCollapsibleState.None, 'action_security', { command: 'devmind.auditSecurity', title: 'Audit Security' }, 'shield'),
                 new DevMindTreeItem('Analyze Database Architecture', vscode.TreeItemCollapsibleState.None, 'action_db', { command: 'devmind.dbAnalyze', title: 'Analyze DB Schema' }, 'database')
             ];
@@ -111,7 +111,7 @@ class DevMindSidebarProvider {
             const hasGraph = fs.existsSync(graphFile);
             return [
                 new DevMindTreeItem(hasGraph ? 'Graphify Index: Active' : 'Graphify Index: Missing', vscode.TreeItemCollapsibleState.None, 'graph_status', undefined, hasGraph ? 'check' : 'warning', hasGraph ? 'graphify-out/graph.json' : 'Run devmind sync'),
-                new DevMindTreeItem('Open Interactive Code Graph', vscode.TreeItemCollapsibleState.None, 'action_open_graph', { command: 'devmind.openGraph', title: 'Open Graph' }, 'eye'),
+                new DevMindTreeItem('Open Interactive Knowledge Graph', vscode.TreeItemCollapsibleState.None, 'action_open_graph', { command: 'devmind.openGraph', title: 'Open Graph' }, 'eye'),
                 new DevMindTreeItem('Analyze File Impact...', vscode.TreeItemCollapsibleState.None, 'action_impact', { command: 'devmind.impact', title: 'File Impact Analysis' }, 'search'),
                 new DevMindTreeItem('Inspect Git Blame Intelligence...', vscode.TreeItemCollapsibleState.None, 'action_blame', { command: 'devmind.blame', title: 'Git Blame Intelligence' }, 'git-commit')
             ];

@@ -19,7 +19,7 @@ graph TD
     Palette --> Commands
 
     Commands --> Runner[DevMind CLI Runner]
-    Commands --> Webview[Code Graph Webview Panel]
+    Commands --> Webview[Knowledge Graph Webview Panel]
 
     Runner --> Exec[child_process.exec]
     Exec --> CLI[devmind CLI / setup-ai-project.sh]
@@ -45,13 +45,13 @@ graph TD
 3. **`src/commands/index.ts` (Command Maps)**:
    - Maps editor context menus and command palette actions to their corresponding CLI commands.
    - Displays progress notifications while commands are running.
-   - Handles advanced flows like **File Impact Analysis** (`devmind impact <file>`), which prints dependency impacts in the terminal and automatically opens the Code Graph webview centered on that file.
+   - Handles advanced flows like **File Impact Analysis** (`devmind impact <file>`), which prints dependency impacts in the terminal and automatically opens the Knowledge Graph webview centered on that file.
 
 4. **`src/views/devmindSidebar.ts` (Sidebar Dashboard)**:
    - Renders five expandable categories:
      - 🩺 **System Health & Audits**: Displays the current Engineering Score and options to run Doctor Diagnostics, Context Sync, Security Audits, and Database Analyses.
      - 🤖 **AI Task Planner & Review**: Links to plan tasks or review uncommitted git diffs.
-     - 📊 **Code Graph & Code Intelligence**: Status of Graphify index, buttons to open the interactive Code Graph, run file impact analyses, and view Git Blame data.
+     - 📊 **Knowledge Graph & Code Intelligence**: Status of Graphify index, buttons to open the interactive Knowledge Graph, run file impact analyses, and view Git Blame data.
      - 📜 **Architecture Decisions (ADRs)**: Fast commands to create ADRs or open existing records inside `docs/adr/`.
      - 🧠 **Project Memory**: Direct access to `.devmind/memory/*.md` context files.
 

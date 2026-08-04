@@ -60,7 +60,7 @@ function registerCommands(context, runner, sidebarProvider, statusBarItem) {
     context.subscriptions.push(vscode.commands.registerCommand('devmind.sync', async () => {
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
-            title: "DevMind: Refreshing Graphify Code Graph & AI Context...",
+            title: "DevMind: Refreshing Graphify Knowledge Graph & AI Context...",
             cancellable: false
         }, async () => {
             await runner.executeCommand(['sync'], true);
@@ -108,7 +108,7 @@ function registerCommands(context, runner, sidebarProvider, statusBarItem) {
             // Execute CLI impact analysis output
             await runner.executeCommand(['impact', relPath], true);
         });
-        // Launch interactive HTML Code Graph webview focused on target file
+        // Launch interactive HTML Knowledge Graph webview focused on target file
         if (root) {
             graphWebview_1.DevMindGraphWebview.createOrShow(context.extensionUri, root, targetSearch);
         }
@@ -192,7 +192,7 @@ function registerCommands(context, runner, sidebarProvider, statusBarItem) {
             await runner.executeCommand(['adr', 'list'], true);
         });
     }));
-    // 11. Open Code Graph Webview
+    // 11. Open Knowledge Graph Webview
     context.subscriptions.push(vscode.commands.registerCommand('devmind.openGraph', async () => {
         const root = runner.getWorkspaceRoot();
         if (root) {
