@@ -36,3 +36,7 @@ This document records the chronological history of feature additions, refactorin
 ### [2026-08-10] Planned Feature: FEATURE [d5d5d91]: feat: make ARCHITECTURE.md generation intelligent and support Frappe specialized agents
 - **Goal**: FEATURE [d5d5d91]: feat: make ARCHITECTURE.md generation intelligent and support Frappe specialized agents
 - **Status**: Planned
+
+### [2026-08-10] Planned Feature: CHORE [defcb50]: docs: sync project memory and ADRs after implementing architecture scanning
+- **Goal**: CHORE [defcb50]: docs: sync project memory and ADRs after implementing architecture scanning
+- **Status**: Planned

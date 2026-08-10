@@ -58,3 +58,9 @@ This document records the major architectural choices made in the project.
 - **Decision**: Design and implementation plan generated for task: FEATURE [d5d5d91]: feat: make ARCHITECTURE.md generation intelligent and support Frappe specialized agents
 - **Reason**: Automatically logged during feature planning command execution.
 - **Status**: Proposed
+
+### 10. Implement Feature: CHORE [defcb50]: docs: sync project memory and ADRs after implementing architecture scanning
+- **Date**: 2026-08-10
+- **Decision**: Design and implementation plan generated for task: CHORE [defcb50]: docs: sync project memory and ADRs after implementing architecture scanning
+- **Reason**: Automatically logged during feature planning command execution.
+- **Status**: Proposed
