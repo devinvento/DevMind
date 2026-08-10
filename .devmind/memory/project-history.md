@@ -24,3 +24,7 @@ This document records the chronological history of feature additions, refactorin
 - **Goal**: FEATURE [29ac337]: feat: add secure LLM API key management and improve AI agent ADR auto-population support
 - **Status**: Planned
 
+
+### [2026-08-10] Planned Feature: REFACTOR [bfcc723]: refactor: implement event-driven queue for post-commit hook
+- **Goal**: REFACTOR [bfcc723]: refactor: implement event-driven queue for post-commit hook
+- **Status**: Planned

@@ -40,3 +40,9 @@ This document records the major architectural choices made in the project.
 - **Reason**: Automatically logged during feature planning command execution.
 - **Status**: Proposed
 
+
+### 7. Implement Feature: REFACTOR [bfcc723]: refactor: implement event-driven queue for post-commit hook
+- **Date**: 2026-08-10
+- **Decision**: Design and implementation plan generated for task: REFACTOR [bfcc723]: refactor: implement event-driven queue for post-commit hook
+- **Reason**: Automatically logged during feature planning command execution.
+- **Status**: Proposed
