@@ -57,3 +57,4 @@ phpunit.xml
 tests/ExampleTest.php
 jest.config.js
 tests/example.test.js
+.devmind/

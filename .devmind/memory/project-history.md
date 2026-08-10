@@ -19,3 +19,8 @@ This document records the chronological history of feature additions, refactorin
 ### [2026-08-10] Planned Feature: CHORE [8702b82]: chore: optimize extension setup, add shallow clone, and configure auto-amend memory post-commit hook
 - **Goal**: CHORE [8702b82]: chore: optimize extension setup, add shallow clone, and configure auto-amend memory post-commit hook
 - **Status**: Planned
+
+### [2026-08-10] Planned Feature: FEATURE [29ac337]: feat: add secure LLM API key management and improve AI agent ADR auto-population support
+- **Goal**: FEATURE [29ac337]: feat: add secure LLM API key management and improve AI agent ADR auto-population support
+- **Status**: Planned
+

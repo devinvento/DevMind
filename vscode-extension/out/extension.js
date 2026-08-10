@@ -45,6 +45,7 @@ const child_process = __importStar(require("child_process"));
 function activate(context) {
     console.log('Activating DevMind Enterprise AI OS VS Code Extension...');
     const runner = new devmindRunner_1.DevMindRunner();
+    runner.setContext(context);
     const sidebarProvider = new devmindSidebar_1.DevMindSidebarProvider(runner);
     // Register Sidebar Tree View
     const treeView = vscode.window.createTreeView('devmind.sidebarView', {

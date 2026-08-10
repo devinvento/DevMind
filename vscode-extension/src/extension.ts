@@ -10,6 +10,7 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('Activating DevMind Enterprise AI OS VS Code Extension...');
 
     const runner = new DevMindRunner();
+    runner.setContext(context);
     const sidebarProvider = new DevMindSidebarProvider(runner);
 
     // Register Sidebar Tree View

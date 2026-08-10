@@ -815,16 +815,14 @@ if [[ -z "$DEVMIND_COMMITTING" ]]; then
             python3 "./bin/devmind" plan "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
         fi
     fi
-    if ! git check-ignore -q .devmind/ 2>/dev/null; then
-        if [[ -d ".devmind/memory" ]]; then
-            git add .devmind/memory/
-        fi
-        if [[ -d "docs/adr" ]]; then
-            git add docs/adr/
-        fi
-        if ! git diff --cached --quiet; then
-            git commit --amend --no-edit --no-verify >/dev/null 2>&1
-        fi
+    if [[ -d ".devmind/memory" ]] && ! git check-ignore -q .devmind/memory/ 2>/dev/null; then
+        git add .devmind/memory/
+    fi
+    if [[ -d "docs/adr" ]] && ! git check-ignore -q docs/adr/ 2>/dev/null; then
+        git add docs/adr/
+    fi
+    if ! git diff --cached --quiet; then
+        git commit --amend --no-edit --no-verify >/dev/null 2>&1
     fi
 fi
 EOF
@@ -852,16 +850,14 @@ if [[ -z "$DEVMIND_COMMITTING" ]]; then
             python3 "./bin/devmind" plan "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
         fi
     fi
-    if ! git check-ignore -q .devmind/ 2>/dev/null; then
-        if [[ -d ".devmind/memory" ]]; then
-            git add .devmind/memory/
-        fi
-        if [[ -d "docs/adr" ]]; then
-            git add docs/adr/
-        fi
-        if ! git diff --cached --quiet; then
-            git commit --amend --no-edit --no-verify >/dev/null 2>&1
-        fi
+    if [[ -d ".devmind/memory" ]] && ! git check-ignore -q .devmind/memory/ 2>/dev/null; then
+        git add .devmind/memory/
+    fi
+    if [[ -d "docs/adr" ]] && ! git check-ignore -q docs/adr/ 2>/dev/null; then
+        git add docs/adr/
+    fi
+    if ! git diff --cached --quiet; then
+        git commit --amend --no-edit --no-verify >/dev/null 2>&1
     fi
 fi
 EOF
@@ -891,16 +887,14 @@ if [[ -z "$DEVMIND_COMMITTING" ]]; then
             python3 "./bin/devmind" plan "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
         fi
     fi
-    if ! git check-ignore -q .devmind/ 2>/dev/null; then
-        if [[ -d ".devmind/memory" ]]; then
-            git add .devmind/memory/
-        fi
-        if [[ -d "docs/adr" ]]; then
-            git add docs/adr/
-        fi
-        if ! git diff --cached --quiet; then
-            git commit --amend --no-edit --no-verify >/dev/null 2>&1
-        fi
+    if [[ -d ".devmind/memory" ]] && ! git check-ignore -q .devmind/memory/ 2>/dev/null; then
+        git add .devmind/memory/
+    fi
+    if [[ -d "docs/adr" ]] && ! git check-ignore -q docs/adr/ 2>/dev/null; then
+        git add docs/adr/
+    fi
+    if ! git diff --cached --quiet; then
+        git commit --amend --no-edit --no-verify >/dev/null 2>&1
     fi
 fi
 EOF
@@ -1110,6 +1104,7 @@ generate_rules() {
 - Decouple controllers from business logic; use Service layers.
 - Do not modify core framework files directly.
 - Automatically create an Architecture Decision Record (ADR) under docs/adr/ when implementing new features or planning major changes.
+- If you see the comment <!-- DEVMIND_PENDING_ADR_AI_POPULATION --> in a newly created ADR file under docs/adr/, you MUST automatically read the recent git commits/diffs, generate the Context, Decision, and Consequences, overwrite the placeholder sections in the ADR with the generated contents, and remove the comment.
 EOF
 
     cat > "$RULES_DIR/database.md" <<'EOF'

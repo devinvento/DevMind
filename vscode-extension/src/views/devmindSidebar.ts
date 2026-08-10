@@ -116,6 +116,13 @@ export class DevMindSidebarProvider implements vscode.TreeDataProvider<DevMindTr
                     'action_db',
                     { command: 'devmind.dbAnalyze', title: 'Analyze DB Schema' },
                     'database'
+                ),
+                new DevMindTreeItem(
+                    'Configure Secure API Keys...',
+                    vscode.TreeItemCollapsibleState.None,
+                    'action_config_keys',
+                    { command: 'devmind.configureAPIKeys', title: 'Configure API Keys' },
+                    'key'
                 )
             ];
         }

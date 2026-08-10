@@ -276,5 +276,37 @@ function registerCommands(context, runner, sidebarProvider, statusBarItem) {
             await updateScoreBadge();
         }
     }));
+    // 13. Configure LLM API Keys securely
+    context.subscriptions.push(vscode.commands.registerCommand('devmind.configureAPIKeys', async () => {
+        const keys = [
+            { label: 'Gemini API Key (GEMINI_API_KEY)', key: 'GEMINI_API_KEY' },
+            { label: 'OpenAI API Key (OPENAI_API_KEY)', key: 'OPENAI_API_KEY' },
+            { label: 'DeepSeek API Key (DEEPSEEK_API_KEY)', key: 'DEEPSEEK_API_KEY' },
+            { label: 'Anthropic API Key (ANTHROPIC_API_KEY)', key: 'ANTHROPIC_API_KEY' }
+        ];
+        const selected = await vscode.window.showQuickPick(keys, {
+            placeHolder: 'Select an LLM API Key to configure securely'
+        });
+        if (!selected) {
+            return;
+        }
+        const existingValue = await context.secrets.get(selected.key);
+        const input = await vscode.window.showInputBox({
+            prompt: `Enter value for ${selected.label}`,
+            placeHolder: existingValue ? '•••••••• (leave empty to clear)' : 'Enter API Key',
+            password: true
+        });
+        if (input === undefined) {
+            return; // User cancelled
+        }
+        if (input.trim() === '') {
+            await context.secrets.delete(selected.key);
+            vscode.window.showInformationMessage(`DevMind: ${selected.key} has been cleared.`);
+        }
+        else {
+            await context.secrets.store(selected.key, input.trim());
+            vscode.window.showInformationMessage(`DevMind: ${selected.key} updated successfully.`);
+        }
+    }));
 }
 //# sourceMappingURL=index.js.map

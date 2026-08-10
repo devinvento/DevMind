@@ -115,6 +115,11 @@
         "command": "devmind.selectDirectory",
         "title": "DevMind: Set Target Repository Directory",
         "icon": "$(folder-opened)"
+      },
+      {
+        "command": "devmind.configureAPIKeys",
+        "title": "DevMind: Configure Secure LLM API Keys",
+        "icon": "$(key)"
       }
     ],
     "menus": {
@@ -163,6 +168,9 @@
         },
         {
           "command": "devmind.selectDirectory"
+        },
+        {
+          "command": "devmind.configureAPIKeys"
         }
       ],
       "explorer/context": [

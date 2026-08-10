@@ -6,9 +6,14 @@ import * as fs from 'fs';
 export class DevMindRunner {
     private outputChannel: vscode.OutputChannel;
     private manualOverrideDir: string | undefined;
+    private context: vscode.ExtensionContext | undefined;
 
     constructor() {
         this.outputChannel = vscode.window.createOutputChannel('DevMind OS');
+    }
+
+    public setContext(context: vscode.ExtensionContext): void {
+        this.context = context;
     }
 
     public setManualOverrideDir(dir: string | undefined): void {
@@ -76,8 +81,25 @@ export class DevMindRunner {
             this.outputChannel.appendLine('='.repeat(60));
         }
 
+        const execEnv: { [key: string]: string | undefined } = { ...process.env, NO_COLOR: '1', TERM: 'dumb' };
+        if (this.context) {
+            const geminiKey = await this.context.secrets.get('GEMINI_API_KEY');
+            if (geminiKey) execEnv['GEMINI_API_KEY'] = geminiKey;
+
+            const openaiKey = await this.context.secrets.get('OPENAI_API_KEY');
+            if (openaiKey) execEnv['OPENAI_API_KEY'] = openaiKey;
+
+            const deepseekKey = await this.context.secrets.get('DEEPSEEK_API_KEY');
+            if (deepseekKey) execEnv['DEEPSEEK_API_KEY'] = deepseekKey;
+
+            const anthropicKey = await this.context.secrets.get('ANTHROPIC_API_KEY') || await this.context.secrets.get('CLAUDE_API_KEY');
+            if (anthropicKey) {
+                execEnv['ANTHROPIC_API_KEY'] = anthropicKey;
+                execEnv['CLAUDE_API_KEY'] = anthropicKey;
+            }
+        }
+
         return new Promise((resolve) => {
-            const execEnv = { ...process.env, NO_COLOR: '1', TERM: 'dumb' };
             child_process.exec(fullCmd, { cwd: root, env: execEnv }, (error, stdout, stderr) => {
                 const cleanStdout = this.stripAnsi(stdout || '');
                 const cleanStderr = this.stripAnsi(stderr || '');

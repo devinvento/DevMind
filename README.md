@@ -67,6 +67,32 @@ sequenceDiagram
 
 ---
 
+### 3. System Flow & Memory Loop
+
+```text
+                     DevMind
+                        │
+       ┌────────────────┼────────────────┐
+       │                │                │
+       ▼                ▼                ▼
+   Graphify          Git Intel        ADR System
+       │                │                │
+       │                │         ┌──────┴──────┐
+       │                │         │             │
+       │                │       API AI       Agent AI
+       │                │         │             │
+       │                │         └──────┬──────┘
+       │                │                │
+       └────────────────┼────────────────┘
+                        ▼
+                  Project Memory
+                        │
+                        ▼
+                  AI Coding Agent
+```
+
+---
+
 ## 🎨 VS Code Extension Graphical Interface
 
 The native **DevMind VS Code Extension** (`devmind-vscode`) integrates AI intelligence directly into your IDE layout:
@@ -130,6 +156,14 @@ DevMind maintains a long-term engineering memory so AI agents never repeat past 
 - **`failed-attempts.md`**: Past technical approaches that failed and rationale.
 - **`project-history.md`**: System evolution log.
 - **`docs/adr/`**: Sequential Architecture Decision Records (e.g., `001-initial-architecture.md`).
+
+### 🛠️ Directory Scoping & Manual Override
+You can manually scope DevMind CLI actions (like sync, diagnostics, and knowledge graphs) to specific nested sub-repositories or folders (e.g., `app/mycustom_app` in Frappe/monorepos). Set this via the **Target Repo** setting in the VS Code extension sidebar or using the `devmind.selectDirectory` command.
+
+### 🤖 AI-Driven Automated ADR Generation
+When creating an ADR (`devmind adr create "<title>"`), DevMind automatically drafts its contents (Context, Decision, and Consequences) using a dual-automation strategy:
+1. **Direct API Integration:** If environment keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, or `ANTHROPIC_API_KEY`/`CLAUDE_API_KEY`) are present, the CLI queries the LLM directly via a lightweight request, feeding it the relevant `git diff` or commit context.
+2. **Coding Agent Auto-Population:** If no keys are set but you are working inside an AI coding agent (like Antigravity, Claude Code, or Cursor), the CLI writes a `<!-- DEVMIND_PENDING_ADR_AI_POPULATION -->` marker and prints a visible terminal directive. The active agent intercepts this and automatically populates the ADR contents based on the git changes.
 
 ---
 

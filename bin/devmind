@@ -442,6 +442,132 @@ def cmd_review(project_dir):
         log_ok("Working tree clean. No uncommitted diffs to review.")
 
     print(f"\n{BOLD}{CYAN}===================================================={NC}\n")
+def generate_adr_content_via_ai(project_dir, title, commit_hash=None):
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY")
+
+    if not (openai_key or gemini_key or deepseek_key or anthropic_key):
+        return None
+
+    # Get git diff or commit info if available
+    context_diff = ""
+    if commit_hash:
+        rc, out, err = run_git_cmd(f"git show {commit_hash}", project_dir)
+        if rc == 0:
+            context_diff = out
+    else:
+        # Fallback: check git diff of uncommitted changes
+        rc, out, err = run_git_cmd("git diff", project_dir)
+        if rc == 0 and out:
+            context_diff = out
+
+    # Truncate context diff if it's too long
+    if len(context_diff) > 8000:
+        context_diff = context_diff[:8000] + "\n... [diff truncated] ..."
+
+    prompt = f"""You are an expert software architect. Generate the body of an Architecture Decision Record (ADR) for the following task/commit.
+Title: {title}
+{"Commit Hash: " + commit_hash if commit_hash else ""}
+
+{"Git Diff context of the changes:" if context_diff else ""}
+{context_diff}
+
+Generate the response in Markdown format, containing exactly these sections:
+## Context
+[Describe why this change was made, the problem it solves, and the background context based on the diff/title]
+
+## Decision
+[Describe the technical decision/solution implemented]
+
+## Consequences
+- **Benefits:**
+  - [Benefit 1]
+  - [Benefit 2]
+- **Trade-offs / Risks:**
+  - [Trade-off/Risk 1]
+  - [Trade-off/Risk 2]
+
+Do not include any other text or code blocks. Just output the sections starting with '## Context'."""
+
+    try:
+        import urllib.request
+        import json
+
+        if gemini_key:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}]
+            }
+            req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as response:
+                res_data = json.loads(response.read().decode('utf-8'))
+                text = res_data['contents'][0]['parts'][0]['text'] if 'contents' in res_data else res_data['candidates'][0]['content']['parts'][0]['text']
+                return text.strip()
+
+        elif anthropic_key:
+            url = "https://api.anthropic.com/v1/messages"
+            headers = {
+                "content-type": "application/json",
+                "x-api-key": anthropic_key,
+                "anthropic-version": "2023-06-01"
+            }
+            payload = {
+                "model": "claude-3-5-sonnet-20241022",
+                "max_tokens": 1500,
+                "messages": [
+                    {"role": "user", "content": prompt}
+                ]
+            }
+            req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as response:
+                res_data = json.loads(response.read().decode('utf-8'))
+                text = res_data['content'][0]['text']
+                return text.strip()
+
+        elif deepseek_key:
+            url = "https://api.deepseek.com/v1/chat/completions"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {deepseek_key}"
+            }
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.2
+            }
+            req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as response:
+                res_data = json.loads(response.read().decode('utf-8'))
+                text = res_data['choices'][0]['message']['content']
+                return text.strip()
+
+        elif openai_key:
+            url = "https://api.openai.com/v1/chat/completions"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {openai_key}"
+            }
+            payload = {
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.2
+            }
+            req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as response:
+                res_data = json.loads(response.read().decode('utf-8'))
+                text = res_data['choices'][0]['message']['content']
+                return text.strip()
+    except Exception as e:
+        log_warn(f"Failed to generate ADR body via LLM API: {e}")
+        return None
+
 def cmd_adr_create(project_dir, title):
     adr_dir = project_dir / "docs" / "adr"
     adr_dir.mkdir(parents=True, exist_ok=True)
@@ -457,7 +583,27 @@ def cmd_adr_create(project_dir, title):
     filename = f"{seq:03d}-{slug}.md"
     filepath = adr_dir / filename
 
-    content = f"""# ADR {seq:03d}: {title}
+    # Extract commit hash if present in title
+    commit_hash = None
+    match = re.search(r'\[([a-f0-9]{7,40})\]', title)
+    if match:
+        commit_hash = match.group(1)
+
+    log_info("Generating ADR content...")
+    ai_content = generate_adr_content_via_ai(project_dir, title, commit_hash)
+
+    if ai_content:
+        log_ok("Successfully generated ADR content via AI!")
+        content = f"""# ADR {seq:03d}: {title}
+
+Date: {datetime.now().strftime('%Y-%m-%d')}
+Status: Accepted
+
+{ai_content}
+"""
+    else:
+        log_warn("Falling back to standard ADR template.")
+        content = f"""# ADR {seq:03d}: {title}
 
 Date: {datetime.now().strftime('%Y-%m-%d')}
 Status: Accepted
@@ -471,7 +617,12 @@ Detail the chosen architecture or technical choice.
 ## Consequences
 - Benefits
 - Trade-offs / Risks
+
+<!-- DEVMIND_PENDING_ADR_AI_POPULATION -->
 """
+        print(f"\n{BOLD}{YELLOW}[DEVMIND AI INSTRUCTION]{NC} Coding Agent: Please read the recent git commits/diffs, generate the Context, Decision, and Consequences, populate them in docs/adr/{filename}, and remove this marker comment.")
+
+
     with filepath.open("w", encoding="utf-8") as f:
         f.write(content)
 

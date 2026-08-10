@@ -112,7 +112,8 @@ class DevMindSidebarProvider {
                 new DevMindTreeItem('Run Full Doctor Diagnostics', vscode.TreeItemCollapsibleState.None, 'action_doctor', { command: 'devmind.doctor', title: 'Run Doctor' }, 'pulse'),
                 new DevMindTreeItem('Sync AI Context & Knowledge Graph', vscode.TreeItemCollapsibleState.None, 'action_sync', { command: 'devmind.sync', title: 'Sync AI Context' }, 'sync'),
                 new DevMindTreeItem('Audit Security Vulnerabilities', vscode.TreeItemCollapsibleState.None, 'action_security', { command: 'devmind.auditSecurity', title: 'Audit Security' }, 'shield'),
-                new DevMindTreeItem('Analyze Database Architecture', vscode.TreeItemCollapsibleState.None, 'action_db', { command: 'devmind.dbAnalyze', title: 'Analyze DB Schema' }, 'database')
+                new DevMindTreeItem('Analyze Database Architecture', vscode.TreeItemCollapsibleState.None, 'action_db', { command: 'devmind.dbAnalyze', title: 'Analyze DB Schema' }, 'database'),
+                new DevMindTreeItem('Configure Secure API Keys...', vscode.TreeItemCollapsibleState.None, 'action_config_keys', { command: 'devmind.configureAPIKeys', title: 'Configure API Keys' }, 'key')
             ];
         }
         if (element.contextValue === 'category_debug') {

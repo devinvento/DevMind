@@ -33,3 +33,10 @@ This document records the major architectural choices made in the project.
 - **Decision**: Design and implementation plan generated for task: CHORE [8702b82]: chore: optimize extension setup, add shallow clone, and configure auto-amend memory post-commit hook
 - **Reason**: Automatically logged during feature planning command execution.
 - **Status**: Proposed
+
+### 6. Implement Feature: FEATURE [29ac337]: feat: add secure LLM API key management and improve AI agent ADR auto-population support
+- **Date**: 2026-08-10
+- **Decision**: Design and implementation plan generated for task: FEATURE [29ac337]: feat: add secure LLM API key management and improve AI agent ADR auto-population support
+- **Reason**: Automatically logged during feature planning command execution.
+- **Status**: Proposed
+
