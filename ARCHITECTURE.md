@@ -1,12 +1,43 @@
 # Project Architecture Overview
 
-Generated: সোমবার 10 আগস্ট 2026 04:04:06 অপরাহ্ণ +06
+Generated: 2026-08-10 16:06:16
+Target Project: /var/www/html/DevMind
 
-## Overview
-- **Primary Stack**: Generic / Unspecified
-- **Technologies**: General Software Project
-- **Testing Suite**: None detected
-- **Database Engine**: None explicitly configured
+## Project Architecture Map
+
+Project
+│
+├── API / Controllers / Routes
+  └── None detected
+│
+├── Business Logic / Services / Models
+  └── None detected
+│
+├── Database
+  └── None explicitly configured
+│
+├── Queue
+  └── Python RQ (Redis Queue)
+│
+├── Cache
+  └── Redis
+│
+├── External APIs
+  └── None explicitly configured
+│
+└── Authentication
+  └── JWT (JSON Web Tokens)
+
+
+## Graphify Knowledge Graph Insights
+- **Total Concept Nodes**: 224
+- **Relations (Edges)**: 360
+- **Key Code Communities / Micro-systems**:
+  - **Community #0**: setup-ai-project.sh, setup-ai-project.sh script, log(), success(), warn()
+  - **Community #1**: index.ts, registerCommands(), devmindRunner.ts, DevMindRunner, .constructor()
+  - **Community #2**: package.json, name, displayName, description, version
+  - **Community #3**: contributes, viewsContainers, activitybar, views, devmind-explorer
+  - **Community #4**: README.md, 🚀 DevMind Enterprise AI Operating System & CLI Suite (v3.0.0), 📊 Graphical System Architecture & Workflow, 1. Master System Pipeline (11-Step Integration), 2. VS Code Extension & File Impact Workflow
 
 ## Architectural Principles
 1. **Modular Design**: Keep core domain business logic decoupled from transport/presentation layers.

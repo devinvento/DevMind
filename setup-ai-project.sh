@@ -382,7 +382,7 @@ detect_project_stack() {
     fi
 
     # Python & Frappe ecosystems
-    if [[ -f "$PROJECT_DIR/apps.txt" ]] || [[ -d "$PROJECT_DIR/sites" ]]; then
+    if [[ -f "$PROJECT_DIR/apps.txt" ]] || [[ -d "$PROJECT_DIR/sites" ]] || find "$PROJECT_DIR" -maxdepth 4 -name "hooks.py" -print -quit | grep -q .; then
         PROJECT_TYPE="Python / Frappe Framework"
         stacks+=("Python" "Frappe" "ERPNext")
     elif [[ -f "$PROJECT_DIR/manage.py" ]]; then
@@ -1032,23 +1032,196 @@ generate_architecture_docs() {
     local doc="$PROJECT_DIR/ARCHITECTURE.md"
     log "Generating Architecture Intelligence Document ($doc)..."
 
-    cat > "$doc" <<EOF
-# Project Architecture Overview
+    python3 - <<EOF
+import os
+import json
+import datetime
+from pathlib import Path
 
-Generated: $(date)
+project_dir = Path("$PROJECT_DIR")
+doc_path = Path("$doc")
 
-## Overview
-- **Primary Stack**: $PROJECT_TYPE
-- **Technologies**: $TECH_STACK
-- **Testing Suite**: $TEST_FRAMEWORK
-- **Database Engine**: $DB_ENGINE
+# Load graph data
+nodes = []
+links = []
+graph_json_path = project_dir / 'graphify-out' / 'graph.json'
+if graph_json_path.exists():
+    try:
+        with open(graph_json_path, 'r') as f:
+            graph_data = json.load(f)
+            nodes = graph_data.get('nodes', [])
+            links = graph_data.get('links', [])
+    except Exception:
+        pass
 
+# Collect codebase files
+code_files = []
+for r, d, f_list in os.walk(project_dir):
+    # Skip ignored directories
+    if any(p in r for p in ['.git', 'node_modules', '.agents', '.devmind', 'graphify-out', 'venv', '.venv']):
+        continue
+    for f in f_list:
+        file_path = Path(r) / f
+        try:
+            rel_path = file_path.relative_to(project_dir)
+            code_files.append(rel_path)
+        except Exception:
+            pass
+
+# Categorize components
+api_controllers_routes = []
+business_logic_models = []
+databases_found = []
+queues_found = []
+caches_found = []
+external_apis_found = []
+auth_found = []
+
+# Scan files content & paths
+for rf in code_files:
+    rf_str = str(rf).lower()
+    
+    # 1. API / Controllers / Routes
+    if any(w in rf_str for w in ['route', 'controller', 'views.py', 'handlers', 'endpoints', 'api/', 'routes/']):
+        api_controllers_routes.append(rf)
+        
+    # 2. Business Logic / Services / Models
+    elif any(w in rf_str for w in ['service', 'models.py', 'models/', 'domain', 'entities', 'doctype']):
+        business_logic_models.append(rf)
+        
+    # Read files to scan for specific patterns (Database, Cache, Queue, External APIs, Authentication)
+    abs_path = project_dir / rf
+    if abs_path.is_file() and abs_path.suffix in ['.py', '.js', '.ts', '.go', '.rb', '.php', '.java', '.json', '.html', '.txt']:
+        try:
+            content = abs_path.read_text(errors='ignore')
+            
+            # Database
+            if 'postgresql' in content.lower() or 'psycopg' in content.lower():
+                if 'PostgreSQL' not in databases_found: databases_found.append('PostgreSQL')
+            if 'mysql' in content.lower() or 'pymysql' in content.lower() or 'mariadb' in content.lower():
+                if 'MySQL / MariaDB' not in databases_found: databases_found.append('MySQL / MariaDB')
+            if 'sqlite' in content.lower():
+                if 'SQLite' not in databases_found: databases_found.append('SQLite')
+            if 'frappe.db' in content.lower():
+                if 'Frappe DB API' not in databases_found: databases_found.append('Frappe DB API')
+                
+            # Queue
+            if 'celery' in content.lower() or 'pika' in content.lower() or 'rabbitmq' in content.lower():
+                if 'Celery/RabbitMQ' not in queues_found: queues_found.append('Celery/RabbitMQ')
+            if 'kafka' in content.lower():
+                if 'Kafka' not in queues_found: queues_found.append('Kafka')
+            if 'rq' in content.lower() or 'frappe.enqueue' in content.lower():
+                if 'Python RQ (Redis Queue)' not in queues_found: queues_found.append('Python RQ (Redis Queue)')
+                
+            # Cache
+            if 'redis' in content.lower() or 'frappe.cache' in content.lower():
+                if 'Redis' not in caches_found: caches_found.append('Redis')
+            if 'memcached' in content.lower():
+                if 'Memcached' not in caches_found: caches_found.append('Memcached')
+                
+            # External APIs
+            if 'shopify' in content.lower():
+                if 'Shopify API' not in external_apis_found: external_apis_found.append('Shopify API')
+            if 'stripe' in content.lower():
+                if 'Stripe API' not in external_apis_found: external_apis_found.append('Stripe API')
+            if 'slack' in content.lower():
+                if 'Slack API' not in external_apis_found: external_apis_found.append('Slack API')
+                
+            # Authentication
+            if 'jwt' in content.lower() or 'jsonwebtoken' in content.lower():
+                if 'JWT (JSON Web Tokens)' not in auth_found: auth_found.append('JWT (JSON Web Tokens)')
+            if 'oauth' in content.lower():
+                if 'OAuth 2.0' not in auth_found: auth_found.append('OAuth 2.0')
+            if 'session' in content.lower() or 'cookie' in content.lower():
+                if 'Session-based Auth' not in auth_found: auth_found.append('Session-based Auth')
+        except Exception:
+            pass
+
+# Fallbacks if scans are empty
+if not databases_found and "$DB_ENGINE" != "None detected":
+    databases_found.append("$DB_ENGINE")
+
+# Format paths helpers
+def format_paths(paths):
+    if not paths:
+        return "  └── None detected"
+    dirs = sorted(list(set([str(p.parent) for p in paths if p.parent != Path('.')])))
+    files = sorted([str(p) for p in paths])
+    
+    lines = []
+    if dirs:
+        lines.append("  ├── **Directories**: " + ", ".join(dirs[:5]))
+    if files:
+        lines.append("  └── **Files**: " + ", ".join([os.path.basename(f) for f in files[:10]]))
+    return "\n".join(lines)
+
+def format_simple_list(lst, default="None explicitly configured"):
+    if not lst:
+        return f"  └── {default}"
+    return "\n".join([f"  └── {item}" if idx == len(lst)-1 else f"  ├── {item}" for idx, item in enumerate(lst)])
+
+# Graphify community or node info if available
+graphify_summary = ""
+if nodes:
+    communities = {}
+    for n in nodes:
+        comm = n.get('community', 'Unassigned')
+        label = n.get('label', '')
+        if comm != 'Unassigned':
+            if comm not in communities:
+                communities[comm] = []
+            if len(communities[comm]) < 5:
+                communities[comm].append(label)
+                
+    graphify_summary = "\n## Graphify Knowledge Graph Insights\n"
+    graphify_summary += f"- **Total Concept Nodes**: {len(nodes)}\n"
+    graphify_summary += f"- **Relations (Edges)**: {len(links)}\n"
+    graphify_summary += "- **Key Code Communities / Micro-systems**:\n"
+    for comm_id, members in sorted(communities.items())[:5]:
+        graphify_summary += f"  - **Community #{comm_id}**: {', '.join(members)}\n"
+
+# Construct final markdown
+markdown = f"""# Project Architecture Overview
+
+Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Target Project: {project_dir.resolve()}
+
+## Project Architecture Map
+
+Project
+│
+├── API / Controllers / Routes
+{format_paths(api_controllers_routes)}
+│
+├── Business Logic / Services / Models
+{format_paths(business_logic_models)}
+│
+├── Database
+{format_simple_list(databases_found)}
+│
+├── Queue
+{format_simple_list(queues_found)}
+│
+├── Cache
+{format_simple_list(caches_found)}
+│
+├── External APIs
+{format_simple_list(external_apis_found)}
+│
+└── Authentication
+{format_simple_list(auth_found)}
+
+{graphify_summary}
 ## Architectural Principles
 1. **Modular Design**: Keep core domain business logic decoupled from transport/presentation layers.
 2. **Service Layer**: Move complex logic from controllers or routing handlers into dedicated service or domain modules.
 3. **Immutability & Safety**: Minimize unexpected side effects. Validate inputs strictly at system boundaries.
 4. **Graphify Alignment**: Consult \`graphify-out/graph.json\` before modifying core shared components.
+"""
+
+doc_path.write_text(markdown)
 EOF
+
     success "Generated ARCHITECTURE.md"
 }
 
@@ -1332,9 +1505,108 @@ generate_specialized_agents() {
     log "Generating Specialized AI Agent Personas in .agents/agents/..."
 
     mkdir -p "$AGENTS_AGENTS_DIR"
+    
+    # Clear any old agent files to avoid residues
+    rm -f "$AGENTS_AGENTS_DIR"/*.md
 
-    # Architect
-    cat > "$AGENTS_AGENTS_DIR/architect.md" <<'EOF'
+    local is_frappe=false
+    if [[ "$PROJECT_TYPE" == *"Frappe"* ]] || [[ "$TECH_STACK" == *"Frappe"* ]]; then
+        is_frappe=true
+    fi
+
+    if [[ "$is_frappe" == "true" ]]; then
+        # Architect (Frappe Specialist)
+        cat > "$AGENTS_AGENTS_DIR/architect.md" <<'EOF'
+# Role: System Architect Agent (Frappe Specialist)
+**Objective**: High-level system design, dependency analysis, and refactoring planning for Frappe applications.
+
+## Guidelines:
+1. Always align designs with the Frappe Framework architecture (sites, apps, DocTypes, hooks, and background workers).
+2. Ensure custom modules use Frappe's native extension mechanisms (e.g. `fixtures`, `custom fields`, and `property setters`) instead of altering core Frappe/ERPNext code.
+3. Validate integrations against standard DocType schema conventions.
+EOF
+
+        # Frappe Developer
+        cat > "$AGENTS_AGENTS_DIR/frappe-developer.md" <<'EOF'
+# Role: Frappe Developer Agent
+**Objective**: Build robust Frappe backend APIs, Whitelisted functions, and server-side controller scripts.
+
+## Guidelines:
+1. Use `frappe.whitelist()` for client-accessible functions, enforcing correct authorization (e.g. `allow_guest=False` unless explicitly public).
+2. Implement hooks (`doc_events`, `override_doctype_class`, etc.) in `hooks.py` for decoupled event-driven logic.
+3. Use Frappe's ORM helper functions (`frappe.get_doc`, `frappe.get_all`, `frappe.db.set_value`) instead of raw SQL queries where possible.
+EOF
+
+        # ERPNext Developer
+        cat > "$AGENTS_AGENTS_DIR/erpnext-developer.md" <<'EOF'
+# Role: ERPNext Developer Agent
+**Objective**: Build and extend business processes, accounting workflows, stock operations, and CRM cycles in the ERPNext ecosystem.
+
+## Guidelines:
+1. Adhere to ERPNext standards for naming, accounting principles, inventory entries, and document states.
+2. Utilize standard patterns for invoice processing, stock reconciliation, and customer relationship management.
+3. Always verify changes against standard tax rules and multi-currency formats.
+EOF
+
+        # DocType Expert
+        cat > "$AGENTS_AGENTS_DIR/doctype-expert.md" <<'EOF'
+# Role: DocType Expert Agent
+**Objective**: DocType schema design, JSON configuration updates, and metadata integrity.
+
+## Guidelines:
+1. Define custom fields, permissions (User Permissions, Role Permissions), and naming series via the DocType UI or fixtures.
+2. Ensure JSON configuration files under doctype folders match database schema requirements.
+3. Handle schema migrations safely using Bench migration tools.
+EOF
+
+        # Bench Expert
+        cat > "$AGENTS_AGENTS_DIR/bench-expert.md" <<'EOF'
+# Role: Bench CLI & Migration Expert Agent
+**Objective**: Site setup, multi-tenant configs, Bench operations, and deployment automation.
+
+## Guidelines:
+1. Always run `bench migrate` to update schema definitions, custom fields, and fixtures.
+2. Monitor Redis cache/socketio states and Celery background workers.
+3. Use Bench utilities (`bench clear-cache`, `bench restart`) for zero-downtime hot-reloads.
+EOF
+
+        # Security Reviewer (Frappe Specialist)
+        cat > "$AGENTS_AGENTS_DIR/security-reviewer.md" <<'EOF'
+# Role: Security Reviewer Agent (Frappe Specialist)
+**Objective**: Identify vulnerabilities, credential leaks, and permission bypasses in Frappe apps.
+
+## Guidelines:
+1. Ensure all whitelisted endpoints verify user permissions (`frappe.has_permission`).
+2. Review custom SQL statements for SQL injection risks (always use placeholder params in `frappe.db.sql`).
+3. Verify CSRF token validation and XSS prevention in Jinja/HTML templates.
+EOF
+
+        # Code Reviewer (Frappe Specialist)
+        cat > "$AGENTS_AGENTS_DIR/code-reviewer.md" <<'EOF'
+# Role: Code Reviewer Agent (Frappe Specialist)
+**Objective**: Enforce clean code, Frappe standards, and framework-level best practices.
+
+## Guidelines:
+1. Ensure files follow PEP 8 standards and Frappe's file structural patterns.
+2. Discourage direct database mutations; enforce using the DocType controller lifecycle methods (`before_insert`, `on_update`, etc.).
+3. Promote efficient queries using `frappe.get_all` with minimal fields instead of `frappe.get_list` or raw SQL.
+EOF
+
+        # Test Engineer (Frappe Specialist)
+        cat > "$AGENTS_AGENTS_DIR/test-engineer.md" <<'EOF'
+# Role: Test Engineer Agent (Frappe Specialist)
+**Objective**: Write Unit and Integration tests using the Frappe test framework.
+
+## Guidelines:
+1. Run tests using `bench run-tests --app <app_name>`.
+2. Mock external HTTP requests or third-party connections using standard unittest mocking.
+3. Use Frappe's test runner to seed mock DocType instances and clean up transactions after each test run.
+EOF
+
+        success "Created 8 specialized Frappe AI Agent personas in .agents/agents/"
+    else
+        # Architect
+        cat > "$AGENTS_AGENTS_DIR/architect.md" <<'EOF'
 # Role: System Architect Agent
 **Objective**: High-level system design, dependency analysis, and refactoring planning.
 
@@ -1344,8 +1616,8 @@ generate_specialized_agents() {
 3. Output concrete implementation plans before modifying code.
 EOF
 
-    # Backend Developer
-    cat > "$AGENTS_AGENTS_DIR/backend-developer.md" <<'EOF'
+        # Backend Developer
+        cat > "$AGENTS_AGENTS_DIR/backend-developer.md" <<'EOF'
 # Role: Backend Developer Agent
 **Objective**: Build robust API endpoints, business services, and backend logic.
 
@@ -1355,8 +1627,8 @@ EOF
 3. Write clean, readable code with comprehensive error handling.
 EOF
 
-    # Frontend Developer
-    cat > "$AGENTS_AGENTS_DIR/frontend-developer.md" <<'EOF'
+        # Frontend Developer
+        cat > "$AGENTS_AGENTS_DIR/frontend-developer.md" <<'EOF'
 # Role: Frontend Developer Agent
 **Objective**: Build modern, accessible, and responsive user interfaces.
 
@@ -1366,8 +1638,8 @@ EOF
 3. Maintain accessible semantic HTML structure.
 EOF
 
-    # Database Expert
-    cat > "$AGENTS_AGENTS_DIR/database-expert.md" <<'EOF'
+        # Database Expert
+        cat > "$AGENTS_AGENTS_DIR/database-expert.md" <<'EOF'
 # Role: Database Expert Agent
 **Objective**: Schema design, query optimization, and migration safety.
 
@@ -1377,8 +1649,8 @@ EOF
 3. Never issue destructive raw drop statements without verification.
 EOF
 
-    # Security Reviewer
-    cat > "$AGENTS_AGENTS_DIR/security-reviewer.md" <<'EOF'
+        # Security Reviewer
+        cat > "$AGENTS_AGENTS_DIR/security-reviewer.md" <<'EOF'
 # Role: Security Reviewer Agent
 **Objective**: Identify vulnerabilities, secret leaks, and security flaws.
 
@@ -1388,8 +1660,8 @@ EOF
 3. Verify authentication and authorization checks.
 EOF
 
-    # Code Reviewer
-    cat > "$AGENTS_AGENTS_DIR/code-reviewer.md" <<'EOF'
+        # Code Reviewer
+        cat > "$AGENTS_AGENTS_DIR/code-reviewer.md" <<'EOF'
 # Role: Code Reviewer Agent
 **Objective**: Code quality audit, pattern enforcement, and clean code validation.
 
@@ -1399,10 +1671,10 @@ EOF
 3. Verify edge cases are handled gracefully.
 EOF
 
-    # Test Engineer
-    cat > "$AGENTS_AGENTS_DIR/test-engineer.md" <<'EOF'
+        # Test Engineer
+        cat > "$AGENTS_AGENTS_DIR/test-engineer.md" <<'EOF'
 # Role: Test Engineer Agent
-**Objective**: Write unit, integration, and regression test cases.
+**Objective**: Write Unit and Integration test cases.
 
 ## Guidelines:
 1. Follow Test-Driven Development (TDD) principles.
@@ -1410,7 +1682,8 @@ EOF
 3. Verify tests pass cleanly before completing tasks.
 EOF
 
-    success "Created 7 specialized AI Agent personas in .agents/agents/"
+        success "Created 7 specialized AI Agent personas in .agents/agents/"
+    fi
 }
 
 ###############################################################################
