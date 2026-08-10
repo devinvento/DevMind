@@ -420,6 +420,26 @@ detect_project_stack() {
     
     PACKAGE_MANAGER=$(detect_package_manager)
     success "Detected Package Manager: ${CYAN}$PACKAGE_MANAGER${NC}"
+
+    # Select Profile based on stack
+    if [[ "$PROJECT_TYPE" == *"Frappe"* ]]; then
+        PROFILE_NAME="frappe"
+    elif [[ "$PROJECT_TYPE" == *"Laravel"* ]]; then
+        PROFILE_NAME="laravel"
+    elif [[ "$PROJECT_TYPE" == *"Django"* ]]; then
+        PROFILE_NAME="django"
+    elif [[ "$PROJECT_TYPE" == *"FastAPI"* ]]; then
+        PROFILE_NAME="fastapi"
+    elif [[ "$PROJECT_TYPE" == *"Next.js"* ]]; then
+        PROFILE_NAME="nextjs"
+    elif [[ "$PROJECT_TYPE" == *"React"* ]] || [[ "$PROJECT_TYPE" == *"Vite"* ]]; then
+        PROFILE_NAME="react"
+    elif [[ "$PROJECT_TYPE" == *"Node.js"* ]]; then
+        PROFILE_NAME="node"
+    else
+        PROFILE_NAME="generic"
+    fi
+    success "Selected Profile: ${CYAN}$PROFILE_NAME${NC}"
 }
 
 detect_package_manager() {
@@ -1840,12 +1860,56 @@ EOF
 # 8. Symlink ECC Skills, Rules & Agents
 ###############################################################################
 
+get_profile_items() {
+    local key="$1"
+    local profile_file="${PROJECT_DIR}/profiles/${PROFILE_NAME}.yaml"
+    if [[ ! -f "$profile_file" ]]; then
+        profile_file="$(dirname "$0")/profiles/${PROFILE_NAME}.yaml"
+    fi
+    if [[ ! -f "$profile_file" ]]; then
+        profile_file="$(dirname "$0")/profiles/generic.yaml"
+    fi
+    
+    python3 -c "
+import re, sys
+profile = {'skills': [], 'agents': [], 'rules': []}
+current_key = None
+try:
+    with open('${profile_file}', 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            if line.startswith('-'):
+                val = line[1:].strip().strip('\"').strip(\"'\")
+                if current_key and current_key in profile:
+                    profile[current_key].append(val)
+            elif ':' in line:
+                k, v = line.split(':', 1)
+                k = k.strip()
+                if k in ['skills', 'agents', 'rules']:
+                    current_key = k
+                else:
+                    current_key = None
+except Exception:
+    pass
+for item in profile['${key}']:
+    print(item)
+" 2>/dev/null
+}
+
 map_ecc_skills() {
     mkdir -p "$SKILLS_DIR"
-    log "Mapping ECC skills from system repository..."
+    log "Mapping ECC skills for profile '$PROFILE_NAME'..."
 
-    find "$ECC_DIR/skills" -mindepth 1 -maxdepth 1 -type d | while read -r skill_dir; do
-        skill_name="$(basename "$skill_dir")"
+    get_profile_items skills | while read -r skill_name; do
+        if [[ -z "$skill_name" ]]; then
+            continue
+        fi
+        local skill_dir="$ECC_DIR/skills/$skill_name"
+        if [[ ! -d "$skill_dir" ]]; then
+            continue
+        fi
         target="$SKILLS_DIR/$skill_name"
         if [[ -e "$target" || -L "$target" ]]; then
             if [[ -L "$target" ]]; then
@@ -1865,21 +1929,33 @@ map_ecc_skills() {
         ln -s "$skill_dir" "$target"
     done
 
-    success "Mapped ECC Skills"
+    success "Mapped ECC Skills for profile '$PROFILE_NAME'"
 }
 
 map_ecc_rules() {
     mkdir -p "$RULES_DIR"
-    log "Mapping ECC rules from system repository..."
+    log "Mapping ECC rules for profile '$PROFILE_NAME'..."
 
-    find "$ECC_DIR/rules" -maxdepth 1 -type f -name '*.md' | while read -r rule_file; do
-        rule_name="$(basename "$rule_file")"
-        target="$RULES_DIR/ecc-$rule_name"
+    get_profile_items rules | while read -r rule_name; do
+        if [[ -z "$rule_name" ]]; then
+            continue
+        fi
+        local rule_file="$ECC_DIR/rules/$rule_name.md"
+        if [[ ! -f "$rule_file" ]]; then
+            rule_file=$(find "$ECC_DIR/rules" -maxdepth 1 -type f -name "$rule_name*" -print -quit)
+        fi
+        if [[ -z "$rule_file" || ! -f "$rule_file" ]]; then
+            continue
+        fi
+        
+        local target_name
+        target_name="$(basename "$rule_file")"
+        target="$RULES_DIR/ecc-$target_name"
         [[ -e "$target" || -L "$target" ]] && rm -f "$target"
         ln -s "$rule_file" "$target"
     done
 
-    success "Mapped ECC Rules"
+    success "Mapped ECC Rules for profile '$PROFILE_NAME'"
 }
 
 map_ecc_agents() {
@@ -1887,17 +1963,30 @@ map_ecc_agents() {
     if [[ ! -d "$ECC_DIR/agents" ]]; then
         return
     fi
-    log "Mapping ECC agents from system repository..."
+    log "Mapping ECC agents for profile '$PROFILE_NAME'..."
 
-    find "$ECC_DIR/agents" -maxdepth 1 -type f -name '*.md' | while read -r agent_file; do
-        agent_name="$(basename "$agent_file")"
-        target="$AGENTS_AGENTS_DIR/ecc-$agent_name"
+    get_profile_items agents | while read -r agent_name; do
+        if [[ -z "$agent_name" ]]; then
+            continue
+        fi
+        local agent_file="$ECC_DIR/agents/$agent_name.md"
+        if [[ ! -f "$agent_file" ]]; then
+            agent_file=$(find "$ECC_DIR/agents" -maxdepth 1 -type f -name "$agent_name*" -print -quit)
+        fi
+        if [[ -z "$agent_file" || ! -f "$agent_file" ]]; then
+            continue
+        fi
+        
+        local target_name
+        target_name="$(basename "$agent_file")"
+        target="$AGENTS_AGENTS_DIR/ecc-$target_name"
         [[ -e "$target" || -L "$target" ]] && rm -f "$target"
         ln -s "$agent_file" "$target"
     done
 
-    success "Mapped ECC Agents"
+    success "Mapped ECC Agents for profile '$PROFILE_NAME'"
 }
+
 
 ###############################################################################
 # 9. Create Master AGENTS.md Operating Manual
@@ -1998,6 +2087,57 @@ build_graphify_graph() {
     else
         warn "Graphify CLI unavailable."
     fi
+}
+
+initialize_context_manifest() {
+    mkdir -p "${PROJECT_DIR}/.devmind"
+    local manifest="${PROJECT_DIR}/.devmind/context.json"
+    log "Initializing DevMind Context Manifest ($manifest)..."
+
+    local current_commit="unknown"
+    if command -v git >/dev/null 2>&1 && [[ -d "${PROJECT_DIR}/.git" ]]; then
+        current_commit=$(git -C "${PROJECT_DIR}" rev-parse HEAD 2>/dev/null || echo "unknown")
+    fi
+
+    local arch_hash=""
+    local db_hash=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        [[ -f "${PROJECT_DIR}/ARCHITECTURE.md" ]] && arch_hash=$(sha256sum "${PROJECT_DIR}/ARCHITECTURE.md" | awk '{print $1}')
+        [[ -f "${PROJECT_DIR}/DATABASE.md" ]] && db_hash=$(sha256sum "${PROJECT_DIR}/DATABASE.md" | awk '{print $1}')
+    elif command -v shasum >/dev/null 2>&1; then
+        [[ -f "${PROJECT_DIR}/ARCHITECTURE.md" ]] && arch_hash=$(shasum -a 256 "${PROJECT_DIR}/ARCHITECTURE.md" | awk '{print $1}')
+        [[ -f "${PROJECT_DIR}/DATABASE.md" ]] && db_hash=$(shasum -a 256 "${PROJECT_DIR}/DATABASE.md" | awk '{print $1}')
+    fi
+
+    local stack_json="[]"
+    if [[ "$PROJECT_TYPE" == *"Frappe"* ]]; then
+        stack_json='["Python", "Frappe Framework", "ERPNext"]'
+    elif [[ "$PROJECT_TYPE" == *"Laravel"* ]]; then
+        stack_json='["PHP", "Laravel"]'
+    elif [[ "$PROJECT_TYPE" == *"Django"* ]]; then
+        stack_json='["Python", "Django"]'
+    elif [[ "$PROJECT_TYPE" == *"FastAPI"* ]]; then
+        stack_json='["Python", "FastAPI"]'
+    elif [[ "$PROJECT_TYPE" == *"Next.js"* ]]; then
+        stack_json='["Node.js", "Next.js", "React"]'
+    elif [[ "$PROJECT_TYPE" == *"React"* ]]; then
+        stack_json='["Node.js", "React"]'
+    elif [[ "$PROJECT_TYPE" == *"Node.js"* ]]; then
+        stack_json='["Node.js"]'
+    else
+        stack_json='["Generic"]'
+    fi
+
+    cat > "$manifest" <<EOF
+{
+  "stack": $stack_json,
+  "last_sync_commit": "$current_commit",
+  "graph_generated_at": "$(date '+%Y-%m-%d %H:%M:%S')",
+  "architecture_hash": "$arch_hash",
+  "database_hash": "$db_hash"
+}
+EOF
+    success "Initialized Context Manifest"
 }
 
 detect_active_editor() {
@@ -2307,6 +2447,7 @@ main() {
     # 7. Operating Manual & Integration
     create_agents_manifest
     build_graphify_graph
+    initialize_context_manifest
     configure_graphify_mcp
     create_setup_report
 

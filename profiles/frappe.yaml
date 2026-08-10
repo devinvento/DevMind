@@ -1,0 +1,20 @@
+name: frappe
+skills:
+  - python-testing
+  - python-patterns
+  - git-workflow
+  - error-handling
+  - security-review
+  - tdd-workflow
+  - mysql-patterns
+  - postgres-patterns
+  - database-migrations
+agents:
+  - architect
+  - backend-developer
+  - doctype-expert
+  - database-expert
+rules:
+  - api
+  - testing
+  - project-specific

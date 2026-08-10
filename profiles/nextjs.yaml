@@ -1,0 +1,18 @@
+name: nextjs
+skills:
+  - frontend-patterns
+  - react-patterns
+  - react-testing
+  - nextjs-turbopack
+  - git-workflow
+  - error-handling
+  - design-system
+  - ui-design
+  - ui-demo
+agents:
+  - architect
+  - frontend-developer
+rules:
+  - api
+  - testing
+  - project-specific

@@ -198,6 +198,186 @@ def cmd_queue(project_dir, task):
         
     log_ok(f"Queued commit event: {task}")
 
+def load_context_manifest(project_dir):
+    manifest_path = project_dir / ".devmind" / "context.json"
+    if manifest_path.exists():
+        try:
+            with open(manifest_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
+
+def save_context_manifest(project_dir, manifest):
+    manifest_path = project_dir / ".devmind" / "context.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(manifest_path, 'w', encoding='utf-8') as f:
+            json.dump(manifest, f, indent=2)
+    except Exception as e:
+        log_warn(f"Failed to save context manifest: {e}")
+
+def get_stack_names(project_dir):
+    stacks = []
+    if (project_dir / "apps.txt").exists() or (project_dir / "sites").exists():
+        stacks = ["Python", "Frappe Framework", "ERPNext"]
+    elif any(project_dir.rglob("hooks.py")):
+        stacks = ["Python", "Frappe Framework"]
+    elif (project_dir / "manage.py").exists():
+        stacks = ["Python", "Django"]
+    elif (project_dir / "artisan").exists():
+        stacks = ["PHP", "Laravel"]
+    elif (project_dir / "package.json").exists():
+        stacks = ["Node.js"]
+        try:
+            with open(project_dir / "package.json", 'r', encoding='utf-8') as f:
+                pkg = json.load(f)
+                deps = pkg.get("dependencies", {})
+                if "next" in deps:
+                    stacks.append("Next.js")
+                if "react" in deps:
+                    stacks.append("React")
+                if "vue" in deps:
+                    stacks.append("Vue")
+        except Exception:
+            pass
+    else:
+        stacks = ["Generic"]
+    return stacks
+
+import hashlib
+def get_file_hash(path):
+    if not path.exists():
+        return ""
+    try:
+        content = path.read_bytes()
+        return hashlib.sha256(content).hexdigest()
+    except Exception:
+        return ""
+
+def get_context_status(project_dir):
+    manifest = load_context_manifest(project_dir)
+    status = {
+        "manifest_exists": False,
+        "graphify": "Stale",
+        "architecture": "Stale",
+        "database": "Stale",
+        "memory": "Stale",
+        "adr": "Stale",
+        "last_sync_commit": None,
+        "commits_behind": 0,
+        "stack": [],
+        "changed_files": []
+    }
+    
+    if not manifest:
+        return status
+        
+    status["manifest_exists"] = True
+    status["last_sync_commit"] = manifest.get("last_sync_commit")
+    status["stack"] = manifest.get("stack", [])
+    
+    repo_dir = get_git_repo_dir(project_dir)
+    rc, head_commit, _ = run_cmd("git rev-parse HEAD", cwd=repo_dir)
+    if rc != 0:
+        status["graphify"] = "Fresh"
+        status["architecture"] = "Fresh"
+        status["database"] = "Fresh"
+        status["memory"] = "Fresh"
+        status["adr"] = "Fresh"
+        return status
+        
+    if not status["last_sync_commit"]:
+        status["last_sync_commit"] = head_commit
+        
+    if status["last_sync_commit"] == head_commit:
+        status["commits_behind"] = 0
+        status["graphify"] = "Fresh"
+        status["architecture"] = "Fresh"
+        status["database"] = "Fresh"
+    else:
+        rc_log, out_log, _ = run_cmd(f"git log --oneline {status['last_sync_commit']}..HEAD", cwd=repo_dir)
+        if rc_log == 0 and out_log:
+            status["commits_behind"] = len(out_log.splitlines())
+        else:
+            status["commits_behind"] = 1
+            
+        rc_diff, out_diff, _ = run_cmd(f"git diff --name-only {status['last_sync_commit']} HEAD", cwd=repo_dir)
+        if rc_diff == 0:
+            changed_files = [line.strip() for line in out_diff.splitlines() if line.strip()]
+            status["changed_files"] = changed_files
+            
+            db_stale = False
+            for f in changed_files:
+                if any(x in f.lower() for x in ["migration", "schema", "doctype", ".sql", "models.py"]):
+                    db_stale = True
+                    break
+            status["database"] = "Stale" if db_stale else "Fresh"
+            
+            arch_stale = False
+            for f in changed_files:
+                if any(x in f.lower() for x in ["route", "controller", "api", "urls.py", "views.py"]):
+                    arch_stale = True
+                    break
+            status["architecture"] = "Stale" if arch_stale else "Fresh"
+            
+            graph_stale = False
+            for f in changed_files:
+                ext = Path(f).suffix
+                if ext in [".py", ".js", ".ts", ".go", ".php", ".rb", ".java", ".cs", ".rs"]:
+                    graph_stale = True
+                    break
+            status["graphify"] = "Stale" if graph_stale else "Fresh"
+        else:
+            status["database"] = "Stale"
+            status["architecture"] = "Stale"
+            status["graphify"] = "Stale"
+            
+    queue_file = project_dir / ".devmind" / "commit_queue.json"
+    if queue_file.exists() and queue_file.stat().st_size > 2:
+        status["memory"] = "Stale"
+        status["adr"] = "Stale"
+    else:
+        status["memory"] = "Fresh"
+        status["adr"] = "Fresh"
+        
+    return status
+
+def cmd_status(project_dir):
+    print(f"\n{BOLD}{CYAN}DevMind Context Status{NC}")
+    print("────────────────────────────")
+    
+    status = get_context_status(project_dir)
+    
+    def format_state(state):
+        if state == "Fresh":
+            return f"{GREEN}✓ Fresh{NC}"
+        elif state == "Stale":
+            return f"{YELLOW}⚠ Stale{NC}"
+        else:
+            return f"{RED}✗ Not Sync'd{NC}"
+            
+    print(f"Graphify        {format_state(status['graphify'])}")
+    print(f"Architecture    {format_state(status['architecture'])}")
+    print(f"Database        {format_state(status['database'])}")
+    print(f"Memory          {format_state(status['memory'])}")
+    print(f"ADR             {format_state(status['adr'])}")
+    
+    print("\nLast Sync:")
+    if status["manifest_exists"] and status["last_sync_commit"]:
+        if status["commits_behind"] == 0:
+            print(f"Up to date with commit: {status['last_sync_commit'][:7]}")
+        else:
+            print(f"{status['commits_behind']} commits ago ({status['last_sync_commit'][:7]})")
+    else:
+        print("Never (Not Initialized)")
+        
+    if any(status[x] == "Stale" or status[x] == "Stale / Not Initialized" for x in ["graphify", "architecture", "database", "memory", "adr"]):
+        print(f"\n{BOLD}Recommendation:{NC}")
+        print(f"  {CYAN}devmind sync{NC}")
+    else:
+        print(f"\n{BOLD}{GREEN}AI Context is 100% up-to-date!{NC}")
+
 def cmd_sync(project_dir):
     log_info("Triggering automatic AI context refresh (devmind sync)...")
     
@@ -225,39 +405,76 @@ def cmd_sync(project_dir):
         else:
             log_info("No queued commit events found.")
 
-    # 1. Update Graphify Graph
-    log_info("Rebuilding Graphify knowledge graph...")
-    rc, out, err = run_cmd("graphify .", cwd=project_dir)
-    if rc == 0:
-        log_ok("Graphify knowledge graph updated (graphify-out/graph.json)")
-    else:
-        log_warn("No LLM API key detected or Graphify failed. Falling back to local/offline AST code-only index...")
-        rc_update, out_update, err_update = run_cmd("graphify update .", cwd=project_dir)
-        if rc_update == 0:
-            log_ok("Graphify knowledge graph updated successfully (offline AST index).")
+    # 1. Determine stack and manifest
+    manifest = load_context_manifest(project_dir) or {}
+    last_sync_commit = manifest.get("last_sync_commit")
+    
+    repo_dir = get_git_repo_dir(project_dir)
+    rc, head_commit, _ = run_cmd("git rev-parse HEAD", cwd=repo_dir)
+    if rc != 0:
+        head_commit = "unknown"
+        
+    # Check which parts need updating
+    status = get_context_status(project_dir)
+    
+    # 2. Update Graphify Graph (Incremental if last_sync_commit is valid and only code changed)
+    if status["graphify"] == "Stale" or not last_sync_commit:
+        if last_sync_commit:
+            log_info("Incremental code changes detected. Running fast Graphify update...")
+            rc, out, err = run_cmd("graphify update .", cwd=project_dir)
         else:
-            log_warn(f"Graphify rebuild warning: {err_update or out_update}")
+            log_info("Building Graphify knowledge graph...")
+            rc, out, err = run_cmd("graphify .", cwd=project_dir)
+            
+        if rc == 0:
+            log_ok("Graphify knowledge graph updated (graphify-out/graph.json)")
+        else:
+            log_warn("No LLM API key detected or Graphify failed. Falling back to local/offline AST code-only index...")
+            rc_update, out_update, err_update = run_cmd("graphify update .", cwd=project_dir)
+            if rc_update == 0:
+                log_ok("Graphify knowledge graph updated successfully (offline AST index).")
+            else:
+                log_warn(f"Graphify rebuild warning: {err_update or out_update}")
+    else:
+        log_info("Graphify knowledge graph is up-to-date (no code files changed).")
 
-    # 2. Update HTML Visualizer
+    # 3. Update HTML Visualizer
     gen_script = project_dir / "generate_graph_html.py"
     if gen_script.exists():
         run_cmd(f"python3 {gen_script} {project_dir}", cwd=project_dir)
         log_ok("HTML graph visualizer updated (graphify-out/graph.html)")
 
-    # 3. Update Intelligence Docs
-    setup_script = Path(__file__).resolve().parent.parent / "setup-ai-project.sh"
-    if not setup_script.exists():
-        setup_script = Path(DEVMIND_SOURCE_DIR) / "setup-ai-project.sh"
-        
-    if setup_script.exists():
-        rc, out, err = run_cmd(f"\"{setup_script}\" {project_dir}", cwd=project_dir)
-        if rc == 0:
-            log_ok("Intelligence documents (DATABASE.md, ARCHITECTURE.md, SECURITY.md) refreshed!")
+    # 4. Update Intelligence Docs
+    docs_needed = status["architecture"] == "Stale" or status["database"] == "Stale" or not last_sync_commit
+    if docs_needed:
+        setup_script = Path(__file__).resolve().parent.parent / "setup-ai-project.sh"
+        if not setup_script.exists():
+            setup_script = Path(DEVMIND_SOURCE_DIR) / "setup-ai-project.sh"
+            
+        if setup_script.exists():
+            log_info("Refreshing framework intelligence documents...")
+            rc, out, err = run_cmd(f"\"{setup_script}\" {project_dir}", cwd=project_dir)
+            if rc == 0:
+                log_ok("Intelligence documents (DATABASE.md, ARCHITECTURE.md, SECURITY.md) refreshed!")
+            else:
+                log_warn(f"Failed to refresh intelligence documents: {err or out}")
         else:
-            log_warn(f"Failed to refresh intelligence documents: {err or out}")
+            log_warn(f"Setup script not found at {setup_script}")
     else:
-        log_warn(f"Setup script not found at {setup_script}")
+        log_info("Framework intelligence docs (ARCHITECTURE.md, DATABASE.md) are up-to-date.")
+
+    # 5. Update Context Manifest
+    stack = get_stack_names(project_dir)
+    manifest["stack"] = stack
+    manifest["last_sync_commit"] = head_commit
+    manifest["graph_generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    manifest["architecture_hash"] = get_file_hash(project_dir / "ARCHITECTURE.md")
+    manifest["database_hash"] = get_file_hash(project_dir / "DATABASE.md")
+    
+    save_context_manifest(project_dir, manifest)
+    log_ok("Context manifest (.devmind/context.json) updated.")
     log_ok("AI Context Sync Complete! Workspace is 100% up to date.")
+
 
 def cmd_plan(project_dir, task):
     print(f"\n{BOLD}{CYAN}===================================================={NC}")
@@ -935,6 +1152,7 @@ Usage: devmind <command> [arguments]
 
 Commands:
   {CYAN}doctor{NC}           Run 8-dimension diagnostic suite & Engineering Score
+  {CYAN}status{NC}           Check staleness of local files, Graphify, and context manifest
   {CYAN}sync{NC}             Refresh Graphify graph, HTML visualizer, context docs & process queue
   {CYAN}plan <task>{NC}      AI Task Planner & affected modules analysis
   {CYAN}queue <task>{NC}     Queue a commit/task event to be processed on next sync
@@ -961,6 +1179,8 @@ def main():
 
     if cmd == "doctor":
         cmd_doctor(project_dir)
+    elif cmd == "status":
+        cmd_status(project_dir)
     elif cmd == "sync":
         cmd_sync(project_dir)
     elif cmd == "plan":

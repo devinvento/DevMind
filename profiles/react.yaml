@@ -1,0 +1,17 @@
+name: react
+skills:
+  - frontend-patterns
+  - react-patterns
+  - react-testing
+  - vite-patterns
+  - git-workflow
+  - error-handling
+  - design-system
+  - ui-design
+agents:
+  - architect
+  - frontend-developer
+rules:
+  - api
+  - testing
+  - project-specific

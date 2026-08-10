@@ -1,0 +1,19 @@
+name: laravel
+skills:
+  - laravel-patterns
+  - laravel-security
+  - laravel-tdd
+  - laravel-verification
+  - git-workflow
+  - error-handling
+  - mysql-patterns
+  - postgres-patterns
+  - database-migrations
+agents:
+  - architect
+  - backend-developer
+  - database-expert
+rules:
+  - api
+  - testing
+  - project-specific

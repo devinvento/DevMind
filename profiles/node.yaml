@@ -1,0 +1,14 @@
+name: node
+skills:
+  - backend-patterns
+  - git-workflow
+  - error-handling
+  - mcp-server-patterns
+  - bun-runtime
+agents:
+  - architect
+  - backend-developer
+rules:
+  - api
+  - testing
+  - project-specific

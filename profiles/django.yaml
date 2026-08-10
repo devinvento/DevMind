@@ -1,0 +1,19 @@
+name: django
+skills:
+  - django-patterns
+  - django-security
+  - django-tdd
+  - django-verification
+  - python-testing
+  - python-patterns
+  - git-workflow
+  - postgres-patterns
+  - database-migrations
+agents:
+  - architect
+  - backend-developer
+  - database-expert
+rules:
+  - api
+  - testing
+  - project-specific

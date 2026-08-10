@@ -1,0 +1,13 @@
+name: generic
+skills:
+  - git-workflow
+  - error-handling
+  - tdd-workflow
+  - security-review
+agents:
+  - architect
+  - backend-developer
+rules:
+  - api
+  - testing
+  - project-specific

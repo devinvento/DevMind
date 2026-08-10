@@ -1,0 +1,16 @@
+name: fastapi
+skills:
+  - fastapi-patterns
+  - python-testing
+  - python-patterns
+  - git-workflow
+  - error-handling
+  - postgres-patterns
+agents:
+  - architect
+  - backend-developer
+  - database-expert
+rules:
+  - api
+  - testing
+  - project-specific
