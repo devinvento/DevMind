@@ -3,13 +3,8 @@
 # ==========================================
 
 # Ignore local AI setup, agents, and knowledge graph outputs
-.agents/
 .agents.bak/
 graphify-out/
-AI_SETUP.md
-ARCHITECTURE.md
-DATABASE.md
-SECURITY.md
 
 # ==========================================
 # Environment & Secrets
@@ -49,6 +44,14 @@ Thumbs.db
 *.swo
 
 # DevMind AI Project Operating System
+
+# DevMind AI Project Operating System & Generated Context
+.agents/
+.devmind/
+AI_SETUP.md
+ARCHITECTURE.md
+DATABASE.md
+SECURITY.md
 generate_graph_html.py
 bin/devmind
 pytest.ini
@@ -57,4 +60,3 @@ phpunit.xml
 tests/ExampleTest.php
 jest.config.js
 tests/example.test.js
-.devmind/

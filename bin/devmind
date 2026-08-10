@@ -176,9 +176,55 @@ def cmd_doctor(project_dir):
     print(f"  {BOLD}Overall DevMind Engineering Score: {color}{overall}% / 100%{NC} 🎉")
     print(f"{BOLD}{CYAN}===================================================={NC}\n")
 
+def cmd_queue(project_dir, task):
+    queue_file = project_dir / ".devmind" / "commit_queue.json"
+    queue_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    queue = []
+    if queue_file.exists():
+        try:
+            with open(queue_file, 'r', encoding='utf-8') as f:
+                queue = json.load(f)
+        except Exception:
+            queue = []
+            
+    queue.append({
+        "task": task,
+        "timestamp": datetime.now().isoformat()
+    })
+    
+    with open(queue_file, 'w', encoding='utf-8') as f:
+        json.dump(queue, f, indent=2)
+        
+    log_ok(f"Queued commit event: {task}")
+
 def cmd_sync(project_dir):
     log_info("Triggering automatic AI context refresh (devmind sync)...")
     
+    # 0. Process queued commit events
+    queue_file = project_dir / ".devmind" / "commit_queue.json"
+    if queue_file.exists():
+        log_info("Processing queued commit events...")
+        queue = []
+        try:
+            with open(queue_file, 'r', encoding='utf-8') as f:
+                queue = json.load(f)
+        except Exception:
+            queue = []
+            
+        if queue:
+            for item in queue:
+                task = item.get("task", "General Task")
+                cmd_plan(project_dir, task)
+            
+            try:
+                os.remove(queue_file)
+            except Exception:
+                pass
+            log_ok("Processed and cleared all queued commit events.")
+        else:
+            log_info("No queued commit events found.")
+
     # 1. Update Graphify Graph
     log_info("Rebuilding Graphify knowledge graph...")
     rc, out, err = run_cmd("graphify .", cwd=project_dir)
@@ -889,8 +935,9 @@ Usage: devmind <command> [arguments]
 
 Commands:
   {CYAN}doctor{NC}           Run 8-dimension diagnostic suite & Engineering Score
-  {CYAN}sync{NC}             Refresh Graphify graph, HTML visualizer & context docs
+  {CYAN}sync{NC}             Refresh Graphify graph, HTML visualizer, context docs & process queue
   {CYAN}plan <task>{NC}      AI Task Planner & affected modules analysis
+  {CYAN}queue <task>{NC}     Queue a commit/task event to be processed on next sync
   {CYAN}debug <issue>{NC}    AI Debugger (Git Blame + Git Bisect + Knowledge Graph)
   {CYAN}why <file>{NC}       File Intelligence (Purpose, ownership, edges, history)
   {CYAN}regression{NC}       Automated Git Bisect Regression Suite
@@ -919,6 +966,9 @@ def main():
     elif cmd == "plan":
         task = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else "General Task"
         cmd_plan(project_dir, task)
+    elif cmd == "queue":
+        task = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else "General Task"
+        cmd_queue(project_dir, task)
     elif cmd == "debug":
         issue = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else "Order total calculation issue"
         cmd_debug(project_dir, issue)

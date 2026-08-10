@@ -28,6 +28,7 @@ set -Eeuo pipefail
 SCRIPT_VERSION="3.0.0"
 SCRIPT_SOURCE_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+INIT_TESTS="false"
 UPDATE_ECC="false"
 PROJECT_ARG=""
 
@@ -37,11 +38,16 @@ while [[ $# -gt 0 ]]; do
             UPDATE_ECC="true"
             shift
             ;;
+        --init-tests)
+            INIT_TESTS="true"
+            shift
+            ;;
         -h|--help)
-            echo "Usage: $0 [--update|-u] [/path/to/project]"
+            echo "Usage: $0 [--update|-u] [--init-tests] [/path/to/project]"
             echo
             echo "Options:"
             echo "  --update, -u    Force git fetch/pull for Everything Claude Code repository"
+            echo "  --init-tests    Scaffold configuration/scaffold test files if not detected"
             echo "  --help, -h      Show this help message"
             exit 0
             ;;
@@ -79,6 +85,10 @@ PROJECT_TYPE="Generic / Unspecified"
 TECH_STACK=""
 TEST_FRAMEWORK="None detected"
 DB_ENGINE="None detected"
+PACKAGE_MANAGER="None detected"
+PRIMARY_DB="None detected"
+SECONDARY_DB="None detected"
+CACHE_QUEUE="None detected"
 
 ###############################################################################
 # Colors
@@ -197,6 +207,28 @@ install_python() {
     install_system_package python3
 }
 
+detect_node_version() {
+    if [[ -f "$PROJECT_DIR/.nvmrc" ]]; then
+        cat "$PROJECT_DIR/.nvmrc" | tr -d '[:space:]'
+    elif [[ -f "$PROJECT_DIR/package.json" ]]; then
+        python3 -c "
+import json, sys
+try:
+    with open('$PROJECT_DIR/package.json') as f:
+        data = json.load(f)
+        node_engine = data.get('engines', {}).get('node', '')
+        import re
+        node_version = re.sub(r'[>=^~<\s]', '', node_engine)
+        if node_version:
+            parts = re.findall(r'\d+(?:\.\d+)*', node_version)
+            if parts:
+                print(parts[0])
+except Exception:
+    pass
+" 2>/dev/null
+    fi
+}
+
 install_node() {
     if check_command node && check_command npm; then
         success "Node.js is installed: $(node --version) (npm $(npm --version))"
@@ -204,18 +236,28 @@ install_node() {
     fi
 
     log "Node.js not found. Installing..."
+    local preferred_ver
+    preferred_ver=$(detect_node_version)
+    if [[ -z "$preferred_ver" ]]; then
+        preferred_ver="--lts"
+        log "No preferred Node.js version detected. Defaulting to --lts"
+    else
+        log "Detected preferred Node.js version from project configurations: $preferred_ver"
+    fi
+
     if [[ -s "$HOME/.nvm/nvm.sh" ]]; then
         export NVM_DIR="$HOME/.nvm"
         # shellcheck disable=SC1090,SC1091
         [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-        nvm install --lts || true
+        nvm install "$preferred_ver"
     else
+        log "Installing nvm..."
         curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash || true
         export NVM_DIR="$HOME/.nvm"
         if [[ -s "$NVM_DIR/nvm.sh" ]]; then
             # shellcheck disable=SC1090,SC1091
             \. "$NVM_DIR/nvm.sh"
-            nvm install --lts
+            nvm install "$preferred_ver"
         fi
     fi
 
@@ -375,6 +417,25 @@ detect_project_stack() {
     TECH_STACK="${stacks[*]:-General Software Project}"
 
     success "Detected Stack: ${CYAN}$PROJECT_TYPE${NC}"
+    
+    PACKAGE_MANAGER=$(detect_package_manager)
+    success "Detected Package Manager: ${CYAN}$PACKAGE_MANAGER${NC}"
+}
+
+detect_package_manager() {
+    if [[ -f "$PROJECT_DIR/pnpm-lock.yaml" ]]; then
+        echo "pnpm"
+    elif [[ -f "$PROJECT_DIR/yarn.lock" ]]; then
+        echo "yarn"
+    elif [[ -f "$PROJECT_DIR/bun.lockb" ]] || [[ -f "$PROJECT_DIR/bun.lock" ]]; then
+        echo "bun"
+    elif [[ -f "$PROJECT_DIR/package-lock.json" ]]; then
+        echo "npm"
+    elif [[ -f "$PROJECT_DIR/package.json" ]]; then
+        echo "npm"
+    else
+        echo "None"
+    fi
 }
 
 detect_testing_framework() {
@@ -412,152 +473,201 @@ detect_testing_framework() {
 }
 
 detect_database() {
-    log "Detecting database architecture..."
+    log "Detecting database & cache/queue architecture with confidence scores..."
 
-    local dbs=()
+    local db_results
+    db_results=$(PROJECT_DIR="$PROJECT_DIR" python3 -c "
+import os
+import re
+import json
 
-    # 1. Environment files (.env)
-    if [[ -f "$PROJECT_DIR/.env" ]]; then
-        if grep -qi "DB_CONNECTION=mysql" "$PROJECT_DIR/.env" 2>/dev/null || grep -qi "mysql" "$PROJECT_DIR/.env" 2>/dev/null; then
-            dbs+=("MySQL / MariaDB")
-        fi
-        if grep -qi "DB_CONNECTION=pgsql" "$PROJECT_DIR/.env" 2>/dev/null || grep -qi "postgres" "$PROJECT_DIR/.env" 2>/dev/null; then
-            dbs+=("PostgreSQL")
-        fi
-        if grep -qi "DB_CONNECTION=sqlite" "$PROJECT_DIR/.env" 2>/dev/null || grep -qi "sqlite" "$PROJECT_DIR/.env" 2>/dev/null; then
-            dbs+=("SQLite")
-        fi
+project_dir = os.environ.get('PROJECT_DIR', '.')
+db_candidates = {}
+cache_candidates = {}
+
+def add_db(name, confidence, source):
+    if name not in db_candidates:
+        db_candidates[name] = []
+    db_candidates[name].append((confidence, source))
+
+def add_cache(name, confidence, source):
+    if name not in cache_candidates:
+        cache_candidates[name] = []
+    cache_candidates[name].append((confidence, source))
+
+env_path = os.path.join(project_dir, '.env')
+if os.path.exists(env_path):
+    try:
+        with open(env_path, 'r', errors='ignore') as f:
+            env_content = f.read()
+            conn_match = re.search(r'DB_CONNECTION\s*=\s*(\w+)', env_content, re.I)
+            if conn_match:
+                conn = conn_match.group(1).lower()
+                if 'mysql' in conn:
+                    add_db('MySQL / MariaDB', 95, '.env DB_CONNECTION')
+                elif 'postgres' in conn or 'pgsql' in conn:
+                    add_db('PostgreSQL', 95, '.env DB_CONNECTION')
+                elif 'sqlite' in conn:
+                    add_db('SQLite', 95, '.env DB_CONNECTION')
+            else:
+                if re.search(r'mysql', env_content, re.I):
+                    add_db('MySQL / MariaDB', 70, '.env keyword')
+                if re.search(r'postgres|pgsql', env_content, re.I):
+                    add_db('PostgreSQL', 70, '.env keyword')
+                if re.search(r'sqlite', env_content, re.I):
+                    add_db('SQLite', 70, '.env keyword')
+            if re.search(r'redis', env_content, re.I):
+                add_cache('Redis', 90, '.env keyword')
+            if re.search(r'memcached', env_content, re.I):
+                add_cache('Memcached', 90, '.env keyword')
+    except Exception:
+        pass
+
+frappe_config = os.path.join(project_dir, 'sites', 'common_site_config.json')
+if os.path.exists(frappe_config):
+    try:
+        with open(frappe_config, 'r') as f:
+            data = json.load(f)
+            db_type = data.get('db_type', '').lower()
+            if 'postgres' in db_type:
+                add_db('PostgreSQL', 95, 'common_site_config db_type')
+            else:
+                add_db('MySQL / MariaDB', 95, 'common_site_config db_type (default)')
+            if 'redis_cache' in data or 'redis_queue' in data:
+                add_cache('Redis', 95, 'common_site_config redis')
+    except Exception:
+        pass
+
+laravel_config = os.path.join(project_dir, 'config', 'database.php')
+if os.path.exists(laravel_config):
+    try:
+        with open(laravel_config, 'r', errors='ignore') as f:
+            content = f.read()
+            match = re.search(r\"'default'\s*=>\s*env\(\s*['\\\" ]DB_CONNECTION['\\\" ]\s*,\s*['\\\"]([^'\\\"]+)['\\\"]\", content)
+            if match:
+                conn = match.group(1).lower()
+                if 'mysql' in conn:
+                    add_db('MySQL / MariaDB', 95, 'Laravel config default')
+                elif 'postgres' in conn or 'pgsql' in conn:
+                    add_db('PostgreSQL', 95, 'Laravel config default')
+                elif 'sqlite' in conn:
+                    add_db('SQLite', 95, 'Laravel config default')
+    except Exception:
+        pass
+
+for root, dirs, files in os.walk(project_dir):
+    if 'settings.py' in files:
+        settings_path = os.path.join(root, 'settings.py')
+        try:
+            with open(settings_path, 'r', errors='ignore') as f:
+                content = f.read()
+                if 'django.db.backends.postgresql' in content:
+                    add_db('PostgreSQL', 95, 'Django settings')
+                if 'django.db.backends.mysql' in content:
+                    add_db('MySQL / MariaDB', 95, 'Django settings')
+                if 'django.db.backends.sqlite3' in content:
+                    add_db('SQLite', 95, 'Django settings')
+        except Exception:
+            pass
+        break
+
+pkg_path = os.path.join(project_dir, 'package.json')
+if os.path.exists(pkg_path):
+    try:
+        with open(pkg_path, 'r') as f:
+            data = json.load(f)
+            deps = {**data.get('dependencies', {}), **data.get('devDependencies', {})}
+            if any(k in deps for k in ['mysql', 'mysql2', 'sequelize', 'typeorm']):
+                add_db('MySQL / MariaDB', 80, 'Node package.json dependencies')
+            if any(k in deps for k in ['pg', 'pg-promise']):
+                add_db('PostgreSQL', 80, 'Node package.json dependencies')
+            if any(k in deps for k in ['sqlite3', 'better-sqlite3']):
+                add_db('SQLite', 80, 'Node package.json dependencies')
+            if any(k in deps for k in ['mongodb', 'mongoose']):
+                add_db('MongoDB', 85, 'Node package.json dependencies')
+            if any(k in deps for k in ['redis', 'ioredis']):
+                add_cache('Redis', 85, 'Node package.json dependencies')
+    except Exception:
+        pass
+
+for dep_file in ['requirements.txt', 'pyproject.toml']:
+    dep_path = os.path.join(project_dir, dep_file)
+    if os.path.exists(dep_path):
+        try:
+            with open(dep_path, 'r', errors='ignore') as f:
+                content = f.read().lower()
+                if 'psycopg' in content or 'asyncpg' in content:
+                    add_db('PostgreSQL', 80, f'Python {dep_file}')
+                if 'mysqlclient' in content or 'pymysql' in content:
+                    add_db('MySQL / MariaDB', 80, f'Python {dep_file}')
+                if 'pymongo' in content or 'motor' in content:
+                    add_db('MongoDB', 85, f'Python {dep_file}')
+                if 'redis' in content:
+                    add_cache('Redis', 80, f'Python {dep_file}')
+        except Exception:
+            pass
+
+sqlite_found = False
+for root, dirs, files in os.walk(project_dir):
+    depth = root[len(project_dir):].count(os.path.sep)
+    if depth > 2:
+        continue
+    for file in files:
+        if file.endswith(('.sqlite', '.sqlite3', '.db')) and not file.startswith('.'):
+            sqlite_found = True
+            break
+    if sqlite_found:
+        break
+if sqlite_found:
+    add_db('SQLite', 60, 'Local SQLite file')
+
+final_dbs = {}
+for db_name, list_vals in db_candidates.items():
+    max_val = max(list_vals, key=lambda x: x[0])
+    final_dbs[db_name] = max_val
+
+final_caches = {}
+for cache_name, list_vals in cache_candidates.items():
+    max_val = max(list_vals, key=lambda x: x[0])
+    final_caches[cache_name] = max_val
+
+sorted_dbs = sorted(final_dbs.items(), key=lambda x: x[1][0], reverse=True)
+sorted_caches = sorted(final_caches.items(), key=lambda x: x[1][0], reverse=True)
+
+primary = 'None detected'
+secondaries = []
+cache = 'None detected'
+
+if sorted_dbs:
+    primary = f\"{sorted_dbs[0][0]} ({sorted_dbs[0][1][0]}% confidence via {sorted_dbs[0][1][1]})\"
+    for item in sorted_dbs[1:]:
+        secondaries.append(f\"{item[0]} ({item[1][0]}% confidence via {item[1][1]})\")
+
+if sorted_caches:
+    cache = ', '.join(f\"{item[0]} ({item[1][0]}% confidence via {item[1][1]})\" for item in sorted_caches)
+
+print('PRIMARY_DB=' + primary)
+print('SECONDARY_DB=' + (', '.join(secondaries) if secondaries else 'None detected'))
+print('CACHE_QUEUE=' + cache)
+" 2>/dev/null)
+
+    if [[ -n "$db_results" ]]; then
+        PRIMARY_DB=$(echo "$db_results" | grep "^PRIMARY_DB=" | cut -d= -f2- || echo "None detected")
+        SECONDARY_DB=$(echo "$db_results" | grep "^SECONDARY_DB=" | cut -d= -f2- || echo "None detected")
+        CACHE_QUEUE=$(echo "$db_results" | grep "^CACHE_QUEUE=" | cut -d= -f2- || echo "None detected")
+        DB_ENGINE="$PRIMARY_DB"
     fi
 
-    # 2. SQLite file checks
-    if find "$PROJECT_DIR" -maxdepth 3 -name "*.sqlite" -o -name "*.sqlite3" -o -name "*.db" 2>/dev/null | grep -q .; then
-        dbs+=("SQLite")
-    fi
-
-    # 3. PHP / Laravel database configuration
-    if [[ -f "$PROJECT_DIR/config/database.php" ]]; then
-        local laravel_driver
-        laravel_driver=$(grep -oE "'default'\s*=>\s*env\(\s*['\"]DB_CONNECTION['\"]\s*,\s*['\"][^'\"]+['\"]" "$PROJECT_DIR/config/database.php" 2>/dev/null | head -n 1 | sed -E "s/.*,\s*['\"]([^'\"]+)['\"].*/\1/" || true)
-        if [[ -n "$laravel_driver" ]]; then
-            if [[ "$laravel_driver" == *"mysql"* ]]; then
-                dbs+=("MySQL / MariaDB")
-            elif [[ "$laravel_driver" == *"postgres"* || "$laravel_driver" == *"pgsql"* ]]; then
-                dbs+=("PostgreSQL")
-            elif [[ "$laravel_driver" == *"sqlite"* ]]; then
-                dbs+=("SQLite")
-            fi
-        else
-            dbs+=("PHP Database Abstraction")
+    if [[ "$PRIMARY_DB" != "None detected" ]]; then
+        success "Primary Database: ${CYAN}$PRIMARY_DB${NC}"
+        if [[ "$SECONDARY_DB" != "None detected" ]]; then
+            success "Secondary Database(s): ${CYAN}$SECONDARY_DB${NC}"
         fi
-    fi
-
-    # 4. CodeIgniter 3 database configuration
-    if [[ -f "$PROJECT_DIR/application/config/database.php" ]]; then
-        local ci_driver
-        ci_driver=$(grep -oE "'dbdriver'\s*\]\s*=\s*['\"][^'\"]+['\"]" "$PROJECT_DIR/application/config/database.php" 2>/dev/null | head -n 1 | sed -E "s/.*=\s*['\"]([^'\"]+)['\"].*/\1/" || true)
-        if [[ -n "$ci_driver" ]]; then
-            if [[ "$ci_driver" == *"mysql"* ]]; then
-                dbs+=("MySQL / MariaDB")
-            elif [[ "$ci_driver" == *"postgre"* || "$ci_driver" == *"pgsql"* ]]; then
-                dbs+=("PostgreSQL")
-            elif [[ "$ci_driver" == *"sqlite"* ]]; then
-                dbs+=("SQLite")
-            else
-                dbs+=("CodeIgniter DB ($ci_driver)")
-            fi
-        else
-            dbs+=("PHP Database Abstraction")
+        if [[ "$CACHE_QUEUE" != "None detected" ]]; then
+            success "Cache / Queue Store: ${CYAN}$CACHE_QUEUE${NC}"
         fi
-    fi
-
-    # 5. Python / Django database configuration
-    local django_settings
-    django_settings=$(find "$PROJECT_DIR" -maxdepth 4 -name "settings.py" 2>/dev/null | head -n 1 || true)
-    if [[ -n "$django_settings" ]]; then
-        if grep -q "django.db.backends.postgresql" "$django_settings" 2>/dev/null; then
-            dbs+=("PostgreSQL")
-        fi
-        if grep -q "django.db.backends.mysql" "$django_settings" 2>/dev/null; then
-            dbs+=("MySQL / MariaDB")
-        fi
-        if grep -q "django.db.backends.sqlite3" "$django_settings" 2>/dev/null; then
-            dbs+=("SQLite")
-        fi
-    fi
-
-    # 6. Java / Spring Boot configurations
-    local spring_configs
-    spring_configs=$(find "$PROJECT_DIR" -maxdepth 4 -name "application.properties" -o -name "application.yml" -o -name "application.yaml" 2>/dev/null || true)
-    if [[ -n "$spring_configs" ]]; then
-        if echo "$spring_configs" | xargs grep -qi "mysql" 2>/dev/null; then
-            dbs+=("MySQL / MariaDB")
-        fi
-        if echo "$spring_configs" | xargs grep -qi "postgresql" 2>/dev/null; then
-            dbs+=("PostgreSQL")
-        fi
-        if echo "$spring_configs" | xargs grep -qi "jdbc:h2" 2>/dev/null; then
-            dbs+=("H2 Database")
-        fi
-        if echo "$spring_configs" | xargs grep -qi "sqlite" 2>/dev/null; then
-            dbs+=("SQLite")
-        fi
-    fi
-
-    # 7. Node.js dependencies
-    if [[ -f "$PROJECT_DIR/package.json" ]]; then
-        if grep -qE '"(mysql|mysql2)"\s*:' "$PROJECT_DIR/package.json" 2>/dev/null; then
-            dbs+=("MySQL / MariaDB")
-        fi
-        if grep -qE '"(pg|pg-promise)"\s*:' "$PROJECT_DIR/package.json" 2>/dev/null; then
-            dbs+=("PostgreSQL")
-        fi
-        if grep -qE '"(sqlite3|better-sqlite3)"\s*:' "$PROJECT_DIR/package.json" 2>/dev/null; then
-            dbs+=("SQLite")
-        fi
-        if grep -qE '"(mongodb|mongoose)"\s*:' "$PROJECT_DIR/package.json" 2>/dev/null; then
-            dbs+=("MongoDB")
-        fi
-        if grep -qE '"(redis|ioredis)"\s*:' "$PROJECT_DIR/package.json" 2>/dev/null; then
-            dbs+=("Redis")
-        fi
-    fi
-
-    # 8. Python dependencies (requirements.txt / pyproject.toml)
-    local py_deps=""
-    if [[ -f "$PROJECT_DIR/requirements.txt" ]]; then
-        py_deps+=$(cat "$PROJECT_DIR/requirements.txt" 2>/dev/null)
-    fi
-    if [[ -f "$PROJECT_DIR/pyproject.toml" ]]; then
-        py_deps+=$(cat "$PROJECT_DIR/pyproject.toml" 2>/dev/null)
-    fi
-    if [[ -n "$py_deps" ]]; then
-        if echo "$py_deps" | grep -qiE "psycopg|asyncpg" 2>/dev/null; then
-            dbs+=("PostgreSQL")
-        fi
-        if echo "$py_deps" | grep -qiE "mysqlclient|pymysql" 2>/dev/null; then
-            dbs+=("MySQL / MariaDB")
-        fi
-        if echo "$py_deps" | grep -qiE "pymongo|motor" 2>/dev/null; then
-            dbs+=("MongoDB")
-        fi
-        if echo "$py_deps" | grep -qiE "redis" 2>/dev/null; then
-            dbs+=("Redis")
-        fi
-    fi
-
-    # 9. Frappe / ERPNext sites config
-    if [[ -f "$PROJECT_DIR/sites/common_site_config.json" ]]; then
-        if grep -qi "db_type.*postgres" "$PROJECT_DIR/sites/common_site_config.json" 2>/dev/null; then
-            dbs+=("PostgreSQL")
-        else
-            dbs+=("MySQL / MariaDB")
-        fi
-    fi
-
-    if [[ ${#dbs[@]} -gt 0 ]]; then
-        DB_ENGINE=$(printf "%s\n" "${dbs[@]}" | sort -u | tr '\n' ' ' | xargs || true)
-        success "Detected Database: ${CYAN}$DB_ENGINE${NC}"
     else
+        PRIMARY_DB="None explicitly configured"
         DB_ENGINE="None explicitly configured"
         warn "No database driver explicitly detected."
     fi
@@ -571,37 +681,349 @@ generate_database_docs() {
     local doc="$PROJECT_DIR/DATABASE.md"
     log "Generating Database Intelligence Document ($doc)..."
 
-    local schema_hints
-    schema_hints=$(find "$PROJECT_DIR" -maxdepth 4 -not -path '*/system/*' -not -path '*/vendor/*' -not -path '*/.git/*' -not -path '*/node_modules/*' \( -name "*migration*" -o -name "*schema*" -o -name "*doctype*" -o -name "*.sql" \) 2>/dev/null || true)
-    if [[ -n "$schema_hints" ]]; then
-        schema_hints=$(echo "$schema_hints" | head -n 15 | sed 's/^/- /')
-    else
-        schema_hints="- None detected"
-    fi
+    PROJECT_DIR="$PROJECT_DIR" \
+    PRIMARY_DB="$PRIMARY_DB" \
+    SECONDARY_DB="$SECONDARY_DB" \
+    CACHE_QUEUE="$CACHE_QUEUE" \
+    PROJECT_TYPE="$PROJECT_TYPE" \
+    PACKAGE_MANAGER="$PACKAGE_MANAGER" \
+    DB_ENGINE="$DB_ENGINE" \
+    DOC_PATH="$doc" \
+    python3 << 'EOF'
+import os
+import re
+import glob
+import subprocess
+from datetime import datetime
 
-    cat > "$doc" <<EOF
-# Database Architecture & Schema Context
+project_dir = os.environ.get('PROJECT_DIR', '.')
+doc_path = os.environ.get('DOC_PATH', 'DATABASE.md')
+primary_db = os.environ.get('PRIMARY_DB', 'None')
+secondary_db = os.environ.get('SECONDARY_DB', 'None')
+cache_queue = os.environ.get('CACHE_QUEUE', 'None')
+project_stack = os.environ.get('PROJECT_TYPE', 'Generic')
+package_manager = os.environ.get('PACKAGE_MANAGER', 'None')
+db_engine = os.environ.get('DB_ENGINE', 'None')
 
-Generated: $(date)
-Target Project: $PROJECT_DIR
+current_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-## Database Overview
-- **Detected Engine**: $DB_ENGINE
-- **Project Stack**: $PROJECT_TYPE
+db_version = "Unknown"
+if "postgres" in db_engine.lower() or "postgresql" in db_engine.lower():
+    try:
+        db_version = subprocess.check_output(["psql", "--version"], stderr=subprocess.DEVNULL).decode().strip()
+    except:
+        pass
+elif "mysql" in db_engine.lower() or "mariadb" in db_engine.lower():
+    try:
+        db_version = subprocess.check_output(["mysql", "--version"], stderr=subprocess.DEVNULL).decode().strip()
+    except:
+        pass
+elif "sqlite" in db_engine.lower():
+    try:
+        db_version = subprocess.check_output(["sqlite3", "--version"], stderr=subprocess.DEVNULL).decode().strip()
+    except:
+        pass
 
-## Key Database Guidelines for AI Agents
-1. **Schema Modifications**:
-   - Always write migrations or structured DDL scripts. Never execute direct destructive schema changes in production.
-   - Ensure foreign key constraints, indexes, and unique constraints are defined.
-2. **Query Performance**:
-   - Avoid \`SELECT *\` queries in performance-critical API paths.
-   - Ensure indexed columns are used in \`WHERE\` and \`JOIN\` clauses.
-3. **Data Integrity**:
-   - Wrap multi-table mutation operations in database transactions.
-   - Use parameterized queries or ORM bindings to prevent SQL Injection.
+tables = {}
+foreign_keys = []
+indexes = []
+relationships = []
+migration_files = []
+potential_issues = []
 
-## Schema Hints & Tables
-$schema_hints
+# Scan for migration files
+migration_patterns = [
+    '**/migrations/*.py',
+    '**/migrations/*.js',
+    '**/migrations/*.ts',
+    '**/database/migrations/*.php',
+    '**/db/migrate/*.rb',
+    '**/migrations/*.sql'
+]
+for pattern in migration_patterns:
+    for path in glob.glob(os.path.join(project_dir, pattern), recursive=True):
+        if any(p in path for p in ['/vendor/', '/node_modules/', '/.git/', '/system/', '/.venv/', '/venv/']):
+            continue
+        migration_files.append(path)
+migration_count = len(migration_files)
+
+# Excluded folders list
+excluded_dirs = ['/vendor/', '/node_modules/', '/.git/', '/system/', '/.venv/', '/venv/', '/graphify-out/', '/.agents/', '/.devmind/']
+
+# Parse Frappe DocTypes
+for root, dirs, files in os.walk(project_dir):
+    if any(p in root for p in excluded_dirs):
+        continue
+    if 'doctype' in root.lower():
+        for file in files:
+            if file.endswith('.json'):
+                path = os.path.join(root, file)
+                try:
+                    import json
+                    with open(path, 'r', errors='ignore') as f:
+                        data = json.load(f)
+                    if isinstance(data, dict) and data.get('doctype') == 'DocType':
+                        doc_name = data.get('name')
+                        if doc_name:
+                            tables[doc_name] = {
+                                'engine': 'Frappe DocType',
+                                'columns': [],
+                                'primary_key': 'name'
+                            }
+                            for field in data.get('fields', []):
+                                fname = field.get('fieldname')
+                                ftype = field.get('fieldtype')
+                                if fname and ftype:
+                                    tables[doc_name]['columns'].append((fname, ftype))
+                                    if ftype == 'Link' and field.get('options'):
+                                        foreign_keys.append((doc_name, fname, field.get('options')))
+                                        relationships.append(f"{doc_name}.{fname} -> {field.get('options')}.name")
+                except Exception:
+                    pass
+
+# Parse Prisma Schema
+for root, dirs, files in os.walk(project_dir):
+    if any(p in root for p in excluded_dirs):
+        continue
+    for file in files:
+        if file == 'schema.prisma':
+            path = os.path.join(root, file)
+            try:
+                with open(path, 'r', errors='ignore') as f:
+                    prisma_content = f.read()
+                models = re.findall(r'model\s+(\w+)\s*\{(.*?)\}', prisma_content, re.DOTALL)
+                for model_name, model_body in models:
+                    tables[model_name] = {
+                        'engine': 'Prisma Model',
+                        'columns': [],
+                        'primary_key': 'id'
+                    }
+                    for line in model_body.splitlines():
+                        line = line.strip()
+                        if not line or line.startswith('//'):
+                            continue
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            field_name = parts[0]
+                            field_type = parts[1]
+                            if '@id' in line:
+                                tables[model_name]['primary_key'] = field_name
+                            tables[model_name]['columns'].append((field_name, field_type))
+                            if '@relation' in line:
+                                rel_match = re.search(r'fields:\s*\[(.*?)\]', line)
+                                ref_match = re.search(r'references:\s*\[(.*?)\]', line)
+                                if rel_match and ref_match:
+                                    rel_field = rel_match.group(1).strip()
+                                    ref_field = ref_match.group(1).strip()
+                                    foreign_keys.append((model_name, rel_field, field_type))
+                                    relationships.append(f"{model_name}.{rel_field} -> {field_type}.{ref_field}")
+            except Exception:
+                pass
+
+# Parse SQL DDL files
+sql_files = []
+for root, dirs, files in os.walk(project_dir):
+    if any(p in root for p in excluded_dirs):
+        continue
+    for file in files:
+        if file.endswith('.sql'):
+            sql_files.append(os.path.join(root, file))
+
+for path in sql_files:
+    try:
+        with open(path, 'r', errors='ignore') as f:
+            sql_content = f.read()
+        sql_content = re.sub(r'--.*', '', sql_content)
+        sql_content = re.sub(r'/\*.*?\*/', '', sql_content, flags=re.DOTALL)
+        creates = re.finditer(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\((.*?)\);', sql_content, re.DOTALL | re.IGNORECASE)
+        for match in creates:
+            table_name = match.group(1)
+            table_body = match.group(2)
+            tables[table_name] = {
+                'engine': 'SQL DDL',
+                'columns': [],
+                'primary_key': 'None'
+            }
+            lines = table_body.split(',')
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split()
+                if len(parts) >= 2:
+                    first_word = parts[0].upper()
+                    if first_word in ['PRIMARY', 'FOREIGN', 'CONSTRAINT', 'INDEX', 'KEY', 'UNIQUE']:
+                        if 'PRIMARY KEY' in line.upper():
+                            pk_match = re.search(r'PRIMARY\s+KEY\s*\((.*?)\)', line, re.IGNORECASE)
+                            if pk_match:
+                                tables[table_name]['primary_key'] = pk_match.group(1).replace('`','').replace('"','').strip()
+                        if 'FOREIGN KEY' in line.upper():
+                            fk_match = re.search(r'FOREIGN\s+KEY\s*\((.*?)\)\s+REFERENCES\s+(\w+)\s*\((.*?)\)', line, re.IGNORECASE)
+                            if fk_match:
+                                fk_col = fk_match.group(1).replace('`','').replace('"','').strip()
+                                ref_tbl = fk_match.group(2).strip()
+                                ref_col = fk_match.group(3).replace('`','').replace('"','').strip()
+                                foreign_keys.append((table_name, fk_col, ref_tbl))
+                                relationships.append(f"{table_name}.{fk_col} -> {ref_tbl}.{ref_col}")
+                        continue
+                    col_name = parts[0].replace('`','').replace('"','').strip()
+                    col_type = parts[1]
+                    if 'PRIMARY KEY' in line.upper():
+                        tables[table_name]['primary_key'] = col_name
+                    tables[table_name]['columns'].append((col_name, col_type))
+    except Exception:
+        pass
+
+# Parse Django models.py
+for root, dirs, files in os.walk(project_dir):
+    if any(p in root for p in excluded_dirs):
+        continue
+    for file in files:
+        if file == 'models.py':
+            path = os.path.join(root, file)
+            try:
+                with open(path, 'r', errors='ignore') as f:
+                    django_content = f.read()
+                classes = re.finditer(r'class\s+(\w+)\s*\(\s*models\.Model\s*\)\s*:(.*?)(?=\nclass|\Z)', django_content, re.DOTALL)
+                for match in classes:
+                    class_name = match.group(1)
+                    class_body = match.group(2)
+                    tables[class_name] = {
+                        'engine': 'Django Model',
+                        'columns': [],
+                        'primary_key': 'id'
+                    }
+                    for line in class_body.splitlines():
+                        line = line.strip()
+                        if '=' in line and not line.startswith('#'):
+                            col_parts = line.split('=', 1)
+                            col_name = col_parts[0].strip()
+                            field_call = col_parts[1].strip()
+                            ftype_match = re.match(r'models\.(\w+Field)', field_call)
+                            if ftype_match:
+                                ftype = ftype_match.group(1)
+                                tables[class_name]['columns'].append((col_name, ftype))
+                                if 'ForeignKey' in field_call or 'OneToOneField' in field_call:
+                                    target_match = re.search(r'(?:ForeignKey|OneToOneField)\(\s*[\'"]?(\w+)[\'"]?', field_call)
+                                    if target_match:
+                                        target_model = target_match.group(1)
+                                        foreign_keys.append((class_name, col_name, target_model))
+                                        relationships.append(f"{class_name}.{col_name} -> {target_model}.id")
+            except Exception:
+                pass
+
+# Parse potential issues
+for table_name, tinfo in tables.items():
+    if tinfo['primary_key'] == 'None' or not tinfo['primary_key']:
+        potential_issues.append(f"Table '{table_name}' has no primary key defined.")
+for fk_tbl, fk_col, ref_tbl in foreign_keys:
+    tbl_names_lower = [t.lower() for t in tables.keys()]
+    if ref_tbl.lower() not in tbl_names_lower:
+        potential_issues.append(f"Foreign key '{fk_tbl}.{fk_col}' references missing table '{ref_tbl}'.")
+
+# Build Markdown
+markdown_out = []
+markdown_out.append("# Database Architecture & Schema Context\n")
+markdown_out.append(f"Generated: {current_date}")
+markdown_out.append(f"Target Project: {project_dir}\n")
+
+markdown_out.append("## Database Overview")
+markdown_out.append(f"- **Primary Database**: {primary_db}")
+markdown_out.append(f"- **Secondary Database(s)**: {secondary_db}")
+markdown_out.append(f"- **Cache / Queue Store**: {cache_queue}")
+markdown_out.append(f"- **Project Stack**: {project_stack}")
+markdown_out.append(f"- **Package Manager**: {package_manager}\n")
+
+markdown_out.append("## Database Architecture Intelligence")
+markdown_out.append("### Primary DB Details")
+markdown_out.append(f"- **Engine**: {db_engine}")
+markdown_out.append(f"- **Version**: {db_version}")
+markdown_out.append(f"- **Migration Count**: {migration_count} files detected\n")
+
+markdown_out.append("### Database Schema")
+
+# Tables
+markdown_out.append("#### ├── Tables")
+if tables:
+    for tname, tinfo in tables.items():
+        markdown_out.append(f"- **{tname}** (Engine: {tinfo['engine']})")
+else:
+    markdown_out.append("- None detected")
+markdown_out.append("")
+
+# Columns
+markdown_out.append("#### ├── Columns")
+if tables:
+    for tname, tinfo in tables.items():
+        markdown_out.append(f"- **{tname}** (PK: `{tinfo['primary_key']}`):")
+        for cname, ctype in tinfo['columns']:
+            markdown_out.append(f"  - `{cname}` ({ctype})")
+else:
+    markdown_out.append("- None detected")
+markdown_out.append("")
+
+# Foreign Keys
+markdown_out.append("#### ├── Foreign Keys")
+if foreign_keys:
+    for fk_tbl, fk_col, ref_tbl in foreign_keys:
+        markdown_out.append(f"- `{fk_tbl}.{fk_col}` -> `{ref_tbl}`")
+else:
+    markdown_out.append("- None detected")
+markdown_out.append("")
+
+# Indexes
+markdown_out.append("#### ├── Indexes")
+sql_indexes = []
+for path in sql_files:
+    try:
+        with open(path, 'r', errors='ignore') as f:
+            sql_content = f.read()
+        idx_matches = re.finditer(r'CREATE\s+(?:UNIQUE\s+)?INDEX\s+(\w+)\s+ON\s+(\w+)\s*\((.*?)\);', sql_content, re.IGNORECASE)
+        for match in idx_matches:
+            sql_indexes.append(f"Index `{match.group(1)}` on `{match.group(2)}({match.group(3)})`")
+    except Exception:
+        pass
+
+if sql_indexes:
+    for idx in sql_indexes:
+        markdown_out.append(f"- {idx}")
+else:
+    if tables:
+        markdown_out.append("- Primary and Foreign Key indexes detected (auto-managed by framework models/migrations)")
+    else:
+        markdown_out.append("- None detected")
+markdown_out.append("")
+
+# Relationships
+markdown_out.append("#### ├── Relationships")
+if relationships:
+    for rel in relationships:
+        markdown_out.append(f"- {rel}")
+else:
+    markdown_out.append("- None detected")
+markdown_out.append("")
+
+# Potential Issues
+markdown_out.append("#### └── Potential Issues")
+if potential_issues:
+    for issue in potential_issues:
+        markdown_out.append(f"- **[Warning]**: {issue}")
+else:
+    markdown_out.append("- None detected. Schema appears structurally sound.")
+
+markdown_out.append("\n## Key Database Guidelines for AI Agents")
+markdown_out.append("1. **Schema Modifications**:")
+markdown_out.append("   - Always write migrations or structured DDL scripts. Never execute direct destructive schema changes in production.")
+markdown_out.append("   - Ensure foreign key constraints, indexes, and unique constraints are defined.")
+markdown_out.append("2. **Query Performance**:")
+markdown_out.append("   - Avoid `SELECT *` queries in performance-critical API paths.")
+markdown_out.append("   - Ensure indexed columns are used in `WHERE` and `JOIN` clauses.")
+markdown_out.append("3. **Data Integrity**:")
+markdown_out.append("   - Wrap multi-table mutation operations in database transactions.")
+markdown_out.append("   - Use parameterized queries or ORM bindings to prevent SQL Injection.")
+
+with open(doc_path, 'w') as f:
+    f.write("\n".join(markdown_out) + "\n")
 EOF
     success "Generated DATABASE.md"
 }
@@ -660,6 +1082,16 @@ EOF
 }
 
 generate_testing_scaffold() {
+    if [[ "$TEST_FRAMEWORK" != "None detected" ]]; then
+        success "Existing testing framework ($TEST_FRAMEWORK) is already configured. Skipping scaffolding."
+        return
+    fi
+
+    if [[ "$INIT_TESTS" != "true" ]]; then
+        warn "No test suite is configured for this stack ($PROJECT_TYPE). To scaffold a default test suite, run the installer with --init-tests."
+        return
+    fi
+
     log "Setting up automated test suite scaffolding based on stack ($PROJECT_TYPE)..."
 
     mkdir -p "$PROJECT_DIR/tests"
@@ -792,117 +1224,103 @@ setup_git_hooks() {
         local hook_file="$git_dir/hooks/post-commit"
         mkdir -p "$git_dir/hooks"
         
-        # Check if the hook already exists
-        if [[ -f "$hook_file" ]]; then
-            if ! grep -q "devmind plan" "$hook_file"; then
-                cat >> "$hook_file" <<'EOF'
+        local hook_result
+        hook_result=$(HOOK_FILE="$hook_file" python3 << 'EOF'
+import os
+import re
 
-# DevMind Auto-Update Hook
-if [[ -z "$DEVMIND_COMMITTING" ]]; then
-    export DEVMIND_COMMITTING=1
-    COMMIT_MSG=$(git log -1 --pretty=%B)
-    COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-    if [[ -f "./bin/devmind" ]]; then
-        if [[ "$COMMIT_MSG" =~ ^[Rr]evert ]]; then
-            python3 "./bin/devmind" plan "REVERT [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-        elif [[ "$COMMIT_MSG" =~ ^(feat|feature) ]]; then
-            python3 "./bin/devmind" plan "FEATURE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-        elif [[ "$COMMIT_MSG" =~ ^refactor ]]; then
-            python3 "./bin/devmind" plan "REFACTOR [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-        elif [[ "$COMMIT_MSG" =~ ^fix ]]; then
-            python3 "./bin/devmind" plan "FIX [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-        else
-            python3 "./bin/devmind" plan "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-        fi
-    fi
-    if [[ -d ".devmind/memory" ]] && ! git check-ignore -q .devmind/memory/ 2>/dev/null; then
-        git add .devmind/memory/
-    fi
-    if [[ -d "docs/adr" ]] && ! git check-ignore -q docs/adr/ 2>/dev/null; then
-        git add docs/adr/
-    fi
-    if ! git diff --cached --quiet; then
-        git commit --amend --no-edit --no-verify >/dev/null 2>&1
-    fi
-fi
-EOF
-                chmod +x "$hook_file"
-                success "Appended DevMind hook to existing post-commit hook: $hook_file"
-            else
-                cat > "$hook_file" <<'EOF'
-#!/usr/bin/env bash
+hook_file = os.environ.get('HOOK_FILE')
+hook_code = '''# >>> DEVMIND HOOK START >>>
 # DevMind Git Post-Commit Hook
-
 if [[ -z "$DEVMIND_COMMITTING" ]]; then
     export DEVMIND_COMMITTING=1
     COMMIT_MSG=$(git log -1 --pretty=%B)
     COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-    if [[ -f "./bin/devmind" ]]; then
-        if [[ "$COMMIT_MSG" =~ ^[Rr]evert ]]; then
-            python3 "./bin/devmind" plan "REVERT [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-        elif [[ "$COMMIT_MSG" =~ ^(feat|feature) ]]; then
-            python3 "./bin/devmind" plan "FEATURE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-        elif [[ "$COMMIT_MSG" =~ ^refactor ]]; then
-            python3 "./bin/devmind" plan "REFACTOR [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-        elif [[ "$COMMIT_MSG" =~ ^fix ]]; then
-            python3 "./bin/devmind" plan "FIX [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+    
+    DEVMIND_CMD="devmind"
+    if ! command -v devmind &>/dev/null; then
+        if [[ -f "./bin/devmind" ]]; then
+            DEVMIND_CMD="python3 ./bin/devmind"
         else
-            python3 "./bin/devmind" plan "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+            DEVMIND_CMD=""
         fi
     fi
-    if [[ -d ".devmind/memory" ]] && ! git check-ignore -q .devmind/memory/ 2>/dev/null; then
-        git add .devmind/memory/
-    fi
-    if [[ -d "docs/adr" ]] && ! git check-ignore -q docs/adr/ 2>/dev/null; then
-        git add docs/adr/
-    fi
-    if ! git diff --cached --quiet; then
-        git commit --amend --no-edit --no-verify >/dev/null 2>&1
+    
+    if [[ -n "$DEVMIND_CMD" ]]; then
+        if [[ "$COMMIT_MSG" =~ ^[Rr]evert ]]; then
+            $DEVMIND_CMD queue "REVERT [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        elif [[ "$COMMIT_MSG" =~ ^(feat|feature) ]]; then
+            $DEVMIND_CMD queue "FEATURE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        elif [[ "$COMMIT_MSG" =~ ^refactor ]]; then
+            $DEVMIND_CMD queue "REFACTOR [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        elif [[ "$COMMIT_MSG" =~ ^fix ]]; then
+            $DEVMIND_CMD queue "FIX [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        else
+            $DEVMIND_CMD queue "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        fi
+        echo -e "\\033[1;36m[DevMind INFO]\\033[0m Commit queued. Run \\033[0;32mdevmind sync\\033[0m to refresh AI memory and generate ADRs."
     fi
 fi
-EOF
-                chmod +x "$hook_file"
-                success "Updated DevMind hook in post-commit hook: $hook_file"
-            fi
-        else
-            # Create a new hook
-            cat > "$hook_file" <<'EOF'
-#!/usr/bin/env bash
-# DevMind Git Post-Commit Hook
+# <<< DEVMIND HOOK END <<<'''
 
-if [[ -z "$DEVMIND_COMMITTING" ]]; then
-    export DEVMIND_COMMITTING=1
-    COMMIT_MSG=$(git log -1 --pretty=%B)
-    COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-    if [[ -f "./bin/devmind" ]]; then
-        if [[ "$COMMIT_MSG" =~ ^[Rr]evert ]]; then
-            python3 "./bin/devmind" plan "REVERT [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-        elif [[ "$COMMIT_MSG" =~ ^(feat|feature) ]]; then
-            python3 "./bin/devmind" plan "FEATURE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-        elif [[ "$COMMIT_MSG" =~ ^refactor ]]; then
-            python3 "./bin/devmind" plan "REFACTOR [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-        elif [[ "$COMMIT_MSG" =~ ^fix ]]; then
-            python3 "./bin/devmind" plan "FIX [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-        else
-            python3 "./bin/devmind" plan "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-        fi
-    fi
-    if [[ -d ".devmind/memory" ]] && ! git check-ignore -q .devmind/memory/ 2>/dev/null; then
-        git add .devmind/memory/
-    fi
-    if [[ -d "docs/adr" ]] && ! git check-ignore -q docs/adr/ 2>/dev/null; then
-        git add docs/adr/
-    fi
-    if ! git diff --cached --quiet; then
-        git commit --amend --no-edit --no-verify >/dev/null 2>&1
-    fi
-fi
+if not os.path.exists(hook_file):
+    with open(hook_file, 'w') as f:
+        f.write('#!/usr/bin/env bash\n' + hook_code + '\n')
+    print('CREATED')
+else:
+    with open(hook_file, 'r') as f:
+        content = f.read()
+    
+    start_marker = '# >>> DEVMIND HOOK START >>>'
+    end_marker = '# <<< DEVMIND HOOK END <<<'
+    if start_marker in content and end_marker in content:
+        pattern = re.compile(rf'{re.escape(start_marker)}.*?{re.escape(end_marker)}', re.DOTALL)
+        new_content = pattern.sub(hook_code, content)
+        with open(hook_file, 'w') as f:
+            f.write(new_content)
+        print('UPDATED_MARKERS')
+    elif 'devmind plan' in content:
+        has_other_stuff = False
+        lines = content.splitlines()
+        for line in lines:
+            line_strip = line.strip()
+            if line_strip and not line_strip.startswith('#') and 'devmind' not in line_strip and 'DEVMIND' not in line_strip and 'git add' not in line_strip and 'git commit' not in line_strip and 'git diff' not in line_strip and 'git check-ignore' not in line_strip and line_strip != 'fi' and line_strip != 'then' and not line_strip.startswith('if'):
+                has_other_stuff = True
+                break
+        if not has_other_stuff:
+            with open(hook_file, 'w') as f:
+                f.write('#!/usr/bin/env bash\n' + hook_code + '\n')
+            print('OVERWRITTEN')
+        else:
+            content_cleaned = re.sub(r'if \[\[ -z "\$DEVMIND_COMMITTING" \]\]; then.*?fi', '', content, flags=re.DOTALL)
+            content_cleaned = re.sub(r'# DevMind.*?\n', '', content_cleaned)
+            content_cleaned = content_cleaned.strip() + '\n\n' + hook_code + '\n'
+            with open(hook_file, 'w') as f:
+                f.write(content_cleaned)
+            print('REPLACED_OLD')
+    else:
+        new_content = content.strip() + '\n\n' + hook_code + '\n'
+        with open(hook_file, 'w') as f:
+            f.write(new_content)
+        print('APPENDED')
 EOF
-            chmod +x "$hook_file"
-            success "Configured automated Git post-commit hook: $hook_file"
+)
+
+        chmod +x "$hook_file"
+
+        if [[ "$hook_result" == "CREATED" ]]; then
+            success "Created new DevMind post-commit hook: $hook_file"
+        elif [[ "$hook_result" == "UPDATED_MARKERS" ]]; then
+            success "Updated DevMind hook markers in: $hook_file"
+        elif [[ "$hook_result" == "OVERWRITTEN" ]]; then
+            success "Overwrote old DevMind post-commit hook: $hook_file"
+        elif [[ "$hook_result" == "REPLACED_OLD" ]]; then
+            success "Replaced old inline DevMind hook and appended new markers to: $hook_file"
+        else
+            success "Appended DevMind hook to existing post-commit hook: $hook_file"
         fi
     else
-        log_warn "No .git directory found at target path. Skipping Git hook configuration."
+        warn "No .git directory found at target path. Skipping Git hook configuration."
     fi
 }
 
@@ -1156,7 +1574,21 @@ map_ecc_skills() {
     find "$ECC_DIR/skills" -mindepth 1 -maxdepth 1 -type d | while read -r skill_dir; do
         skill_name="$(basename "$skill_dir")"
         target="$SKILLS_DIR/$skill_name"
-        [[ -e "$target" || -L "$target" ]] && rm -rf "$target"
+        if [[ -e "$target" || -L "$target" ]]; then
+            if [[ -L "$target" ]]; then
+                local link_target
+                link_target=$(readlink "$target")
+                if [[ "$link_target" == "$skill_dir" ]]; then
+                    rm -f "$target"
+                else
+                    warn "Local custom skill symlink '$skill_name' points to '$link_target'. Preserving it."
+                    continue
+                fi
+            else
+                warn "Local custom skill directory '$skill_name' already exists. Preserving it."
+                continue
+            fi
+        fi
         ln -s "$skill_dir" "$target"
     done
 
@@ -1480,58 +1912,59 @@ EOF
 
 update_gitignore() {
     local gitignore="$PROJECT_DIR/.gitignore"
-    log "Updating .gitignore to exclude DevMind and AI setup files..."
+    log "Updating .gitignore to exclude DevMind metadata and assets..."
 
     # Ensure .gitignore exists
     touch "$gitignore"
 
-    # Entries to add
-    local entries=(
-        ".agents/"
-        ".devmind/"
-        "graphify-out/"
-        "AI_SETUP.md"
-        "ARCHITECTURE.md"
-        "DATABASE.md"
-        "SECURITY.md"
-        "generate_graph_html.py"
-        "bin/devmind"
-        "pytest.ini"
-        "tests/test_example.py"
-        "phpunit.xml"
-        "tests/ExampleTest.php"
-        "jest.config.js"
-        "tests/example.test.js"
-    )
+    local gitignore_result
+    gitignore_result=$(GITIGNORE_PATH="$gitignore" python3 -c "
+import os
 
-    local header="# DevMind AI Project Operating System"
-    local header_added=false
-    local added=0
+gitignore_path = os.environ.get('GITIGNORE_PATH')
+if os.path.exists(gitignore_path):
+    with open(gitignore_path, 'r', errors='ignore') as f:
+        content = f.read()
+    
+    required_ignores = [
+        '.agents/',
+        '.devmind/',
+        'AI_SETUP.md',
+        'ARCHITECTURE.md',
+        'DATABASE.md',
+        'SECURITY.md',
+        'generate_graph_html.py',
+        'bin/devmind',
+        'pytest.ini',
+        'tests/test_example.py',
+        'phpunit.xml',
+        'tests/ExampleTest.php',
+        'jest.config.js',
+        'tests/example.test.js',
+        'graphify-out/'
+    ]
+    
+    lines = content.splitlines()
+    existing_ignores = {line.strip() for line in lines if line.strip() and not line.strip().startswith('#')}
+    
+    missing_ignores = [pattern for pattern in required_ignores if pattern not in existing_ignores]
+    
+    if missing_ignores:
+        new_content = content
+        if new_content and not new_content.endswith('\n'):
+            new_content += '\n'
+        new_content += '\n# DevMind AI Project Operating System & Generated Context\n'
+        for pattern in missing_ignores:
+            new_content += f'{pattern}\n'
+        with open(gitignore_path, 'w') as f:
+            f.write(new_content)
+        print('ADDED_IGNORES')
+    else:
+        print('UP_TO_DATE')
+" 2>/dev/null)
 
-    for entry in "${entries[@]}"; do
-        if ! grep -Fqx "$entry" "$gitignore"; then
-            # Add header first if not already present and we are about to add entries
-            if ! grep -Fqx "$header" "$gitignore" && [ "$header_added" = false ]; then
-                # If the file doesn't end with a newline, add one first
-                if [[ -s "$gitignore" && "$(tail -c 1 "$gitignore" | wc -l)" -eq 0 ]]; then
-                    echo "" >> "$gitignore"
-                fi
-                echo "" >> "$gitignore"
-                echo "$header" >> "$gitignore"
-                header_added=true
-            fi
-            
-            # If the file doesn't end with a newline, add one first
-            if [[ -s "$gitignore" && "$(tail -c 1 "$gitignore" | wc -l)" -eq 0 ]]; then
-                echo "" >> "$gitignore"
-            fi
-            echo "$entry" >> "$gitignore"
-            added=$((added + 1))
-        fi
-    done
-
-    if [[ $added -gt 0 ]]; then
-        success "Added $added entries to .gitignore"
+    if [[ "$gitignore_result" == *"ADDED_IGNORES"* ]]; then
+        success "Added missing ignore patterns to .gitignore"
     else
         success ".gitignore is already up to date"
     fi
