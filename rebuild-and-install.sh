@@ -56,7 +56,6 @@ fi
 # 2. Cleanup User-Owned Dependencies & Configurations
 log "Cleaning up previous user-level installations..."
 rm -f "$HOME/.local/bin/devmind"
-rm -rf "$HOME/.local/share/everything-claude-code"
 rm -rf .agents graphify-out AI_SETUP.md DATABASE.md ARCHITECTURE.md SECURITY.md
 success "User-level dependencies cleaned."
 
@@ -108,7 +107,22 @@ chmod +x "$PROJECT_DIR/bin/devmind"
 ln -sf "$PROJECT_DIR/bin/devmind" "$HOME/.local/bin/devmind"
 success "DevMind CLI re-linked to $HOME/.local/bin/devmind"
 
+# Auto-install VSIX package into VS Code or Cursor if CLI is available
+VSIX_PATH="$PROJECT_DIR/vscode-extension/devmind-vscode-1.0.0.vsix"
+if command -v code &> /dev/null; then
+    log "Installing updated extension into VS Code..."
+    code --install-extension "$VSIX_PATH" --force || warn "Could not auto-install VSIX into VS Code."
+    success "VS Code extension updated!"
+fi
+
+if command -v cursor &> /dev/null; then
+    log "Installing updated extension into Cursor..."
+    cursor --install-extension "$VSIX_PATH" --force || warn "Could not auto-install VSIX into Cursor."
+    success "Cursor extension updated!"
+fi
+
 echo -e "${CYAN}====================================================${NC}"
-echo -e "${GREEN}   DevMind VSIX Rebuilt Successfully! 🎉${NC}"
-echo -e "${YELLOW}   Output: $PROJECT_DIR/vscode-extension/devmind-vscode-1.0.0.vsix${NC}"
+echo -e "${GREEN}   DevMind VSIX Rebuilt & Installed Successfully! 🎉${NC}"
+echo -e "${YELLOW}   Output: $VSIX_PATH${NC}"
 echo -e "${CYAN}====================================================${NC}"
+

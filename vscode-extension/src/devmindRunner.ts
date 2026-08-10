@@ -5,12 +5,24 @@ import * as fs from 'fs';
 
 export class DevMindRunner {
     private outputChannel: vscode.OutputChannel;
+    private manualOverrideDir: string | undefined;
 
     constructor() {
         this.outputChannel = vscode.window.createOutputChannel('DevMind OS');
     }
 
+    public setManualOverrideDir(dir: string | undefined): void {
+        this.manualOverrideDir = dir;
+    }
+
+    public getManualOverrideDir(): string | undefined {
+        return this.manualOverrideDir;
+    }
+
     public getWorkspaceRoot(): string | undefined {
+        if (this.manualOverrideDir && fs.existsSync(this.manualOverrideDir)) {
+            return this.manualOverrideDir;
+        }
         const folders = vscode.workspace.workspaceFolders;
         if (folders && folders.length > 0) {
             return folders[0].uri.fsPath;

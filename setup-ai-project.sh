@@ -291,7 +291,7 @@ install_ecc_repository() {
     else
         log "Cloning Everything Claude Code repository..."
         mkdir -p "$(dirname "$ECC_DIR")"
-        git clone "$ECC_REPO_URL" "$ECC_DIR"
+        git clone --depth 1 "$ECC_REPO_URL" "$ECC_DIR"
         success "ECC repository cloned"
     fi
 
@@ -310,7 +310,7 @@ install_ecc_repository() {
     else
         log "Cloning Frappe skills repository..."
         mkdir -p "$(dirname "$frappe_skills_temp_dir")"
-        git clone "$frappe_skills_url" "$frappe_skills_temp_dir" --quiet
+        git clone --depth 1 "$frappe_skills_url" "$frappe_skills_temp_dir" --quiet
     fi
 
     if [[ -d "$frappe_skills_temp_dir/skills" ]]; then
@@ -798,19 +798,33 @@ setup_git_hooks() {
                 cat >> "$hook_file" <<'EOF'
 
 # DevMind Auto-Update Hook
-COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1)
-COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-if [[ -f "./bin/devmind" ]]; then
-    if [[ "$COMMIT_MSG" =~ ^[Rr]evert ]]; then
-        python3 "./bin/devmind" plan "REVERT [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-    elif [[ "$COMMIT_MSG" =~ ^(feat|feature) ]]; then
-        python3 "./bin/devmind" plan "FEATURE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-    elif [[ "$COMMIT_MSG" =~ ^refactor ]]; then
-        python3 "./bin/devmind" plan "REFACTOR [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-    elif [[ "$COMMIT_MSG" =~ ^fix ]]; then
-        python3 "./bin/devmind" plan "FIX [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-    else
-        python3 "./bin/devmind" plan "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+if [[ -z "$DEVMIND_COMMITTING" ]]; then
+    export DEVMIND_COMMITTING=1
+    COMMIT_MSG=$(git log -1 --pretty=%B)
+    COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    if [[ -f "./bin/devmind" ]]; then
+        if [[ "$COMMIT_MSG" =~ ^[Rr]evert ]]; then
+            python3 "./bin/devmind" plan "REVERT [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        elif [[ "$COMMIT_MSG" =~ ^(feat|feature) ]]; then
+            python3 "./bin/devmind" plan "FEATURE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        elif [[ "$COMMIT_MSG" =~ ^refactor ]]; then
+            python3 "./bin/devmind" plan "REFACTOR [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        elif [[ "$COMMIT_MSG" =~ ^fix ]]; then
+            python3 "./bin/devmind" plan "FIX [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        else
+            python3 "./bin/devmind" plan "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        fi
+    fi
+    if ! git check-ignore -q .devmind/ 2>/dev/null; then
+        if [[ -d ".devmind/memory" ]]; then
+            git add .devmind/memory/
+        fi
+        if [[ -d "docs/adr" ]]; then
+            git add docs/adr/
+        fi
+        if ! git diff --cached --quiet; then
+            git commit --amend --no-edit --no-verify >/dev/null 2>&1
+        fi
     fi
 fi
 EOF
@@ -821,23 +835,33 @@ EOF
 #!/usr/bin/env bash
 # DevMind Git Post-Commit Hook
 
-# Get the latest commit message and hash
-COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1)
-COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-
-if [[ -f "./bin/devmind" ]]; then
-    # Route by commit type
-    if [[ "$COMMIT_MSG" =~ ^[Rr]evert ]]; then
-        python3 "./bin/devmind" plan "REVERT [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-    elif [[ "$COMMIT_MSG" =~ ^(feat|feature) ]]; then
-        python3 "./bin/devmind" plan "FEATURE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-    elif [[ "$COMMIT_MSG" =~ ^refactor ]]; then
-        python3 "./bin/devmind" plan "REFACTOR [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-    elif [[ "$COMMIT_MSG" =~ ^fix ]]; then
-        python3 "./bin/devmind" plan "FIX [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-    else
-        # Chores, docs, style, and tests go to lightweight log
-        python3 "./bin/devmind" plan "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+if [[ -z "$DEVMIND_COMMITTING" ]]; then
+    export DEVMIND_COMMITTING=1
+    COMMIT_MSG=$(git log -1 --pretty=%B)
+    COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    if [[ -f "./bin/devmind" ]]; then
+        if [[ "$COMMIT_MSG" =~ ^[Rr]evert ]]; then
+            python3 "./bin/devmind" plan "REVERT [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        elif [[ "$COMMIT_MSG" =~ ^(feat|feature) ]]; then
+            python3 "./bin/devmind" plan "FEATURE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        elif [[ "$COMMIT_MSG" =~ ^refactor ]]; then
+            python3 "./bin/devmind" plan "REFACTOR [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        elif [[ "$COMMIT_MSG" =~ ^fix ]]; then
+            python3 "./bin/devmind" plan "FIX [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        else
+            python3 "./bin/devmind" plan "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        fi
+    fi
+    if ! git check-ignore -q .devmind/ 2>/dev/null; then
+        if [[ -d ".devmind/memory" ]]; then
+            git add .devmind/memory/
+        fi
+        if [[ -d "docs/adr" ]]; then
+            git add docs/adr/
+        fi
+        if ! git diff --cached --quiet; then
+            git commit --amend --no-edit --no-verify >/dev/null 2>&1
+        fi
     fi
 fi
 EOF
@@ -850,23 +874,33 @@ EOF
 #!/usr/bin/env bash
 # DevMind Git Post-Commit Hook
 
-# Get the latest commit message and hash
-COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1)
-COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-
-if [[ -f "./bin/devmind" ]]; then
-    # Route by commit type
-    if [[ "$COMMIT_MSG" =~ ^[Rr]evert ]]; then
-        python3 "./bin/devmind" plan "REVERT [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-    elif [[ "$COMMIT_MSG" =~ ^(feat|feature) ]]; then
-        python3 "./bin/devmind" plan "FEATURE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-    elif [[ "$COMMIT_MSG" =~ ^refactor ]]; then
-        python3 "./bin/devmind" plan "REFACTOR [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-    elif [[ "$COMMIT_MSG" =~ ^fix ]]; then
-        python3 "./bin/devmind" plan "FIX [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
-    else
-        # Chores, docs, style, and tests go to lightweight log
-        python3 "./bin/devmind" plan "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+if [[ -z "$DEVMIND_COMMITTING" ]]; then
+    export DEVMIND_COMMITTING=1
+    COMMIT_MSG=$(git log -1 --pretty=%B)
+    COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    if [[ -f "./bin/devmind" ]]; then
+        if [[ "$COMMIT_MSG" =~ ^[Rr]evert ]]; then
+            python3 "./bin/devmind" plan "REVERT [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        elif [[ "$COMMIT_MSG" =~ ^(feat|feature) ]]; then
+            python3 "./bin/devmind" plan "FEATURE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        elif [[ "$COMMIT_MSG" =~ ^refactor ]]; then
+            python3 "./bin/devmind" plan "REFACTOR [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        elif [[ "$COMMIT_MSG" =~ ^fix ]]; then
+            python3 "./bin/devmind" plan "FIX [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        else
+            python3 "./bin/devmind" plan "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
+        fi
+    fi
+    if ! git check-ignore -q .devmind/ 2>/dev/null; then
+        if [[ -d ".devmind/memory" ]]; then
+            git add .devmind/memory/
+        fi
+        if [[ -d "docs/adr" ]]; then
+            git add docs/adr/
+        fi
+        if ! git diff --cached --quiet; then
+            git commit --amend --no-edit --no-verify >/dev/null 2>&1
+        fi
     fi
 fi
 EOF

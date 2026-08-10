@@ -21,3 +21,15 @@ This document records the major architectural choices made in the project.
 - **Decision**: Design and implementation plan generated for task: FEATURE [19202c4]: feat: add support for ~/.local/bin/devmind binary, automate ADR creation, and remove stale documentation files
 - **Reason**: Automatically logged during feature planning command execution.
 - **Status**: Proposed
+
+### 4. Implement Feature: FEATURE [96df95f]: feat: integrate automated ADR generation and enhance Graphify MCP configuration support for multiple IDEs and environments.
+- **Date**: 2026-08-10
+- **Decision**: Design and implementation plan generated for task: FEATURE [96df95f]: feat: integrate automated ADR generation and enhance Graphify MCP configuration support for multiple IDEs and environments.
+- **Reason**: Automatically logged during feature planning command execution.
+- **Status**: Proposed
+
+### 5. Implement Feature: CHORE [8702b82]: chore: optimize extension setup, add shallow clone, and configure auto-amend memory post-commit hook
+- **Date**: 2026-08-10
+- **Decision**: Design and implementation plan generated for task: CHORE [8702b82]: chore: optimize extension setup, add shallow clone, and configure auto-amend memory post-commit hook
+- **Reason**: Automatically logged during feature planning command execution.
+- **Status**: Proposed

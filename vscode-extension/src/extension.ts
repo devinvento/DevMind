@@ -37,6 +37,14 @@ export function activate(context: vscode.ExtensionContext) {
         const agentsDir = path.join(root, '.agents');
 
         if (fs.existsSync(setupScript) && !fs.existsSync(agentsDir)) {
+            const isDevMindRepo = fs.existsSync(path.join(root, 'vscode-extension')) && 
+                                 fs.existsSync(path.join(root, 'rebuild-and-install.sh'));
+            if (isDevMindRepo) {
+                statusBarItem.text = '$(brain) DevMind: Ready (DevMode)';
+                statusBarItem.tooltip = 'DevMind Development Mode active';
+                return;
+            }
+
             vscode.window.withProgress({
                 location: vscode.ProgressLocation.Notification,
                 title: "DevMind: Auto-installing CLI dependencies & context engine...",

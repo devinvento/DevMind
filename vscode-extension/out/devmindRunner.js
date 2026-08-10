@@ -40,10 +40,20 @@ const path = __importStar(require("path"));
 const fs = __importStar(require("fs"));
 class DevMindRunner {
     outputChannel;
+    manualOverrideDir;
     constructor() {
         this.outputChannel = vscode.window.createOutputChannel('DevMind OS');
     }
+    setManualOverrideDir(dir) {
+        this.manualOverrideDir = dir;
+    }
+    getManualOverrideDir() {
+        return this.manualOverrideDir;
+    }
     getWorkspaceRoot() {
+        if (this.manualOverrideDir && fs.existsSync(this.manualOverrideDir)) {
+            return this.manualOverrideDir;
+        }
         const folders = vscode.workspace.workspaceFolders;
         if (folders && folders.length > 0) {
             return folders[0].uri.fsPath;

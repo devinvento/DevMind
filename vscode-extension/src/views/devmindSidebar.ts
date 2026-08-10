@@ -48,6 +48,7 @@ export class DevMindSidebarProvider implements vscode.TreeDataProvider<DevMindTr
             // Root categories
             return [
                 new DevMindTreeItem('🩺 System Health & Audits', vscode.TreeItemCollapsibleState.Expanded, 'category_health', undefined, 'pulse'),
+                new DevMindTreeItem('🐞 AI Git Debugger & Regression', vscode.TreeItemCollapsibleState.Expanded, 'category_debug', undefined, 'bug'),
                 new DevMindTreeItem('🤖 AI Task Planner & Review', vscode.TreeItemCollapsibleState.Expanded, 'category_ai_tasks', undefined, 'robot'),
                 new DevMindTreeItem('📊 Knowledge Graph & Code Intelligence', vscode.TreeItemCollapsibleState.Collapsed, 'category_graph', undefined, 'graph'),
                 new DevMindTreeItem('📜 Architecture Decisions (ADRs)', vscode.TreeItemCollapsibleState.Collapsed, 'category_adr', undefined, 'law'),
@@ -57,7 +58,29 @@ export class DevMindSidebarProvider implements vscode.TreeDataProvider<DevMindTr
 
         if (element.contextValue === 'category_health') {
             const score = await this.runner.getEngineeringScore();
+            const overrideDir = this.runner.getManualOverrideDir();
+            const displayRoot = overrideDir ? overrideDir : root;
+            
+            let displayPath = displayRoot;
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (workspaceFolders && workspaceFolders.length > 0) {
+                const wsRoot = workspaceFolders[0].uri.fsPath;
+                if (displayRoot === wsRoot) {
+                    displayPath = './';
+                } else if (displayRoot.startsWith(wsRoot)) {
+                    displayPath = '.' + path.sep + path.relative(wsRoot, displayRoot);
+                }
+            }
+
             return [
+                new DevMindTreeItem(
+                    `Target Repo: ${displayPath}`,
+                    vscode.TreeItemCollapsibleState.None,
+                    'action_select_dir',
+                    { command: 'devmind.selectDirectory', title: 'Set Target Directory' },
+                    'folder',
+                    overrideDir ? 'Manual Override' : 'Auto'
+                ),
                 new DevMindTreeItem(
                     `Engineering Score: ${score}%`,
                     vscode.TreeItemCollapsibleState.None,
@@ -93,6 +116,32 @@ export class DevMindSidebarProvider implements vscode.TreeDataProvider<DevMindTr
                     'action_db',
                     { command: 'devmind.dbAnalyze', title: 'Analyze DB Schema' },
                     'database'
+                )
+            ];
+        }
+
+        if (element.contextValue === 'category_debug') {
+            return [
+                new DevMindTreeItem(
+                    'Debug Issue (Git Bisect + Graphify)...',
+                    vscode.TreeItemCollapsibleState.None,
+                    'action_debug',
+                    { command: 'devmind.debug', title: 'AI Debugger' },
+                    'bug'
+                ),
+                new DevMindTreeItem(
+                    'Why This File? (Git + Graph Intelligence)',
+                    vscode.TreeItemCollapsibleState.None,
+                    'action_why',
+                    { command: 'devmind.why', title: 'Why This File?' },
+                    'question'
+                ),
+                new DevMindTreeItem(
+                    'Run Automated Regression Bisect...',
+                    vscode.TreeItemCollapsibleState.None,
+                    'action_regression',
+                    { command: 'devmind.regression', title: 'Run Regression' },
+                    'history'
                 )
             ];
         }

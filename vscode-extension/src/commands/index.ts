@@ -68,6 +68,75 @@ export function registerCommands(
         })
     );
 
+    // 3b. AI Debugger (Git Bisect + Graph)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('devmind.debug', async () => {
+            const issue = await vscode.window.showInputBox({
+                prompt: 'Describe the bug / regression for DevMind AI Debugger',
+                placeHolder: 'e.g. Order total is wrong after yesterday calculation update'
+            });
+
+            if (issue) {
+                await vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: `DevMind: Running AI Debugger & Git Bisect for "${issue}"...`,
+                    cancellable: false
+                }, async () => {
+                    await runner.executeCommand(['debug', issue], true);
+                });
+            }
+        })
+    );
+
+    // 3c. Why This File? (Git + Graph Intelligence)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('devmind.why', async (uri?: vscode.Uri) => {
+            let filePath: string | undefined;
+
+            if (uri && uri.fsPath) {
+                filePath = uri.fsPath;
+            } else if (vscode.window.activeTextEditor) {
+                filePath = vscode.window.activeTextEditor.document.uri.fsPath;
+            }
+
+            if (!filePath) {
+                vscode.window.showWarningMessage('DevMind: Please open or select a file to inspect intelligence.');
+                return;
+            }
+
+            const relPath = path.relative(runner.getWorkspaceRoot() || '', filePath);
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: `DevMind: Inspecting File Intelligence for ${relPath}...`,
+                cancellable: false
+            }, async () => {
+                await runner.executeCommand(['why', relPath], true);
+            });
+        })
+    );
+
+    // 3d. Automated Git Bisect Regression Suite
+    context.subscriptions.push(
+        vscode.commands.registerCommand('devmind.regression', async () => {
+            const goodCommit = await vscode.window.showInputBox({
+                prompt: 'Enter known good commit hash or reference (optional, defaults to HEAD~5)',
+                placeHolder: 'e.g. HEAD~5 or a81f2c3'
+            });
+            const badCommit = await vscode.window.showInputBox({
+                prompt: 'Enter bad commit hash or reference (optional, defaults to HEAD)',
+                placeHolder: 'e.g. HEAD or b72a901'
+            });
+
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: 'DevMind: Running Automated Git Bisect Regression Suite...',
+                cancellable: false
+            }, async () => {
+                await runner.executeCommand(['regression', goodCommit || 'HEAD~5', badCommit || 'HEAD'], true);
+            });
+        })
+    );
+
     // 4. File Impact Analysis
     context.subscriptions.push(
         vscode.commands.registerCommand('devmind.impact', async (uri?: vscode.Uri) => {
@@ -210,6 +279,30 @@ export function registerCommands(
             const root = runner.getWorkspaceRoot();
             if (root) {
                 DevMindGraphWebview.createOrShow(context.extensionUri, root);
+            }
+        })
+    );
+
+    // 12. Set Target Repository Directory Manually
+    context.subscriptions.push(
+        vscode.commands.registerCommand('devmind.selectDirectory', async () => {
+            const options: vscode.OpenDialogOptions = {
+                canSelectMany: false,
+                openLabel: 'Select Target Repository Directory',
+                canSelectFiles: false,
+                canSelectFolders: true
+            };
+
+            const fileUri = await vscode.window.showOpenDialog(options);
+            if (fileUri && fileUri[0]) {
+                const selectedDir = fileUri[0].fsPath;
+                runner.setManualOverrideDir(selectedDir);
+                vscode.window.showInformationMessage(`DevMind: Target directory manually set to: ${selectedDir}`);
+                await updateScoreBadge();
+            } else {
+                runner.setManualOverrideDir(undefined);
+                vscode.window.showInformationMessage('DevMind: Reset to automatic directory detection.');
+                await updateScoreBadge();
             }
         })
     );

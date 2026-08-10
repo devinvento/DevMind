@@ -57,6 +57,21 @@
         "icon": "$(list-ordered)"
       },
       {
+        "command": "devmind.debug",
+        "title": "DevMind: AI Debugger (Git Bisect + Graph)",
+        "icon": "$(bug)"
+      },
+      {
+        "command": "devmind.why",
+        "title": "DevMind: Why This File? (Git + Graph Intelligence)",
+        "icon": "$(question)"
+      },
+      {
+        "command": "devmind.regression",
+        "title": "DevMind: Automated Git Bisect Regression",
+        "icon": "$(history)"
+      },
+      {
         "command": "devmind.impact",
         "title": "DevMind: File Impact Analysis",
         "icon": "$(graph)"
@@ -95,6 +110,11 @@
         "command": "devmind.openGraph",
         "title": "DevMind: Open Knowledge Graph",
         "icon": "$(graph)"
+      },
+      {
+        "command": "devmind.selectDirectory",
+        "title": "DevMind: Set Target Repository Directory",
+        "icon": "$(folder-opened)"
       }
     ],
     "menus": {
@@ -107,6 +127,15 @@
         },
         {
           "command": "devmind.plan"
+        },
+        {
+          "command": "devmind.debug"
+        },
+        {
+          "command": "devmind.why"
+        },
+        {
+          "command": "devmind.regression"
         },
         {
           "command": "devmind.impact"
@@ -131,9 +160,16 @@
         },
         {
           "command": "devmind.openGraph"
+        },
+        {
+          "command": "devmind.selectDirectory"
         }
       ],
       "explorer/context": [
+        {
+          "command": "devmind.why",
+          "group": "7_devmind@0"
+        },
         {
           "command": "devmind.impact",
           "group": "7_devmind@1"
@@ -145,6 +181,10 @@
       ],
       "editor/context": [
         {
+          "command": "devmind.why",
+          "group": "7_devmind@0"
+        },
+        {
           "command": "devmind.impact",
           "group": "7_devmind@1"
         },
@@ -155,6 +195,10 @@
       ],
       "editor/title": [
         {
+          "command": "devmind.why",
+          "group": "navigation"
+        },
+        {
           "command": "devmind.impact",
           "group": "navigation"
         },
@@ -164,6 +208,10 @@
         }
       ],
       "editor/title/context": [
+        {
+          "command": "devmind.why",
+          "group": "7_devmind@0"
+        },
         {
           "command": "devmind.impact",
           "group": "7_devmind@1"

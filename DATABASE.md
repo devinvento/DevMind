@@ -1,6 +1,6 @@
 # Database Architecture & Schema Context
 
-Generated: Sun Aug  2 12:01:55 AM +06 2026
+Generated: সোমবার 10 আগস্ট 2026 11:50:46 পূর্বাহ্ণ +06
 Target Project: /var/www/html/DevMind
 
 ## Database Overview
@@ -19,4 +19,4 @@ Target Project: /var/www/html/DevMind
    - Use parameterized queries or ORM bindings to prevent SQL Injection.
 
 ## Schema Hints & Tables
-- /var/www/html/DevMind/.agents/skills/database-migrations
+- None detected
