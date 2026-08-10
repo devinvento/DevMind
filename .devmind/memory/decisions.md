@@ -46,3 +46,15 @@ This document records the major architectural choices made in the project.
 - **Decision**: Design and implementation plan generated for task: REFACTOR [bfcc723]: refactor: implement event-driven queue for post-commit hook
 - **Reason**: Automatically logged during feature planning command execution.
 - **Status**: Proposed
+
+### 8. Implement Feature: CHORE [1d53bd2]: docs: update memory and ADRs after queue processing
+- **Date**: 2026-08-10
+- **Decision**: Design and implementation plan generated for task: CHORE [1d53bd2]: docs: update memory and ADRs after queue processing
+- **Reason**: Automatically logged during feature planning command execution.
+- **Status**: Proposed
+
+### 9. Implement Feature: FEATURE [d5d5d91]: feat: make ARCHITECTURE.md generation intelligent and support Frappe specialized agents
+- **Date**: 2026-08-10
+- **Decision**: Design and implementation plan generated for task: FEATURE [d5d5d91]: feat: make ARCHITECTURE.md generation intelligent and support Frappe specialized agents
+- **Reason**: Automatically logged during feature planning command execution.
+- **Status**: Proposed

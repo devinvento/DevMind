@@ -28,3 +28,11 @@ This document records the chronological history of feature additions, refactorin
 ### [2026-08-10] Planned Feature: REFACTOR [bfcc723]: refactor: implement event-driven queue for post-commit hook
 - **Goal**: REFACTOR [bfcc723]: refactor: implement event-driven queue for post-commit hook
 - **Status**: Planned
+
+### [2026-08-10] Planned Feature: CHORE [1d53bd2]: docs: update memory and ADRs after queue processing
+- **Goal**: CHORE [1d53bd2]: docs: update memory and ADRs after queue processing
+- **Status**: Planned
+
+### [2026-08-10] Planned Feature: FEATURE [d5d5d91]: feat: make ARCHITECTURE.md generation intelligent and support Frappe specialized agents
+- **Goal**: FEATURE [d5d5d91]: feat: make ARCHITECTURE.md generation intelligent and support Frappe specialized agents
+- **Status**: Planned

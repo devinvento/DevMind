@@ -1,6 +1,6 @@
 # Project Architecture Overview
 
-Generated: 2026-08-10 16:06:16
+Generated: 2026-08-10 16:06:35
 Target Project: /var/www/html/DevMind
 
 ## Project Architecture Map
@@ -30,8 +30,8 @@ Project
 
 
 ## Graphify Knowledge Graph Insights
-- **Total Concept Nodes**: 224
-- **Relations (Edges)**: 360
+- **Total Concept Nodes**: 234
+- **Relations (Edges)**: 368
 - **Key Code Communities / Micro-systems**:
   - **Community #0**: setup-ai-project.sh, setup-ai-project.sh script, log(), success(), warn()
   - **Community #1**: index.ts, registerCommands(), devmindRunner.ts, DevMindRunner, .constructor()
