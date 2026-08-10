@@ -62,7 +62,7 @@ PROJECT_DIR="${PROJECT_ARG:-$(pwd)}"
 ECC_REPO_URL="${ECC_REPO_URL:-https://github.com/affaan-m/everything-claude-code.git}"
 ECC_DIR="${ECC_DIR:-$HOME/.local/share/everything-claude-code}"
 
-ANTIGRAVITY_MCP_CONFIG="${HOME}/.gemini/antigravity/mcp_config.json"
+ANTIGRAVITY_MCP_CONFIG="${HOME}/.gemini/config/mcp_config.json"
 
 AGENTS_DIR="${PROJECT_DIR}/.agents"
 SKILLS_DIR="${AGENTS_DIR}/skills"
@@ -299,7 +299,7 @@ install_ecc_repository() {
     [[ -d "$ECC_DIR/rules" ]] || die "ECC rules directory not found at $ECC_DIR/rules"
 
     # Auto-integrate Frappe skills repository
-    local frappe_skills_url="https://github.com/frappe/skills.git"
+    local frappe_skills_url="${FRAPPE_SKILLS_URL:-https://github.com/frappe/skills.git}"
     local frappe_skills_temp_dir="$HOME/.local/share/frappe-skills"
     if [[ -d "$frappe_skills_temp_dir/.git" ]]; then
         if [[ "$UPDATE_ECC" == "true" ]]; then
@@ -1266,31 +1266,112 @@ build_graphify_graph() {
     fi
 }
 
-configure_graphify_mcp() {
-    log "Configuring Graphify MCP server..."
-    mkdir -p "$(dirname "$ANTIGRAVITY_MCP_CONFIG")"
+detect_active_editor() {
+    if [[ -n "${ANTIGRAVITY_AGENT:-}" || -n "${ANTIGRAVITY_EDITOR_APP_ROOT:-}" || "${CHROME_DESKTOP:-}" == *"antigravity"* || "${GIO_LAUNCHED_DESKTOP_FILE:-}" == *"antigravity"* ]]; then
+        echo "antigravity"
+    elif [[ -n "${CURSOR_AGENT:-}" || -n "${CURSOR_APP_ROOT:-}" || "${TERM_PROGRAM:-}" == "cursor" || -n "${CURSOR_TRACE_ID:-}" ]]; then
+        echo "cursor"
+    elif [[ -n "${VSCODE_PID:-}" || "${TERM_PROGRAM:-}" == "vscode" ]]; then
+        echo "vscode"
+    else
+        echo "cli"
+    fi
+}
 
-    if [[ ! -f "$ANTIGRAVITY_MCP_CONFIG" ]]; then
-        cat > "$ANTIGRAVITY_MCP_CONFIG" <<'EOF'
+configure_graphify_mcp() {
+    local active_editor
+    active_editor="$(detect_active_editor)"
+    log "Configuring Graphify MCP servers for detected editor: ${active_editor}..."
+
+    # 1. Antigravity/Gemini configs (workspace-relative paths)
+    local relative_configs=(
+        "${HOME}/.gemini/config/mcp_config.json"
+        "${HOME}/.gemini/antigravity/mcp_config.json"
+        "${HOME}/.gemini/antigravity-ide/mcp_config.json"
+    )
+
+    # 2. Other IDEs / Clients (absolute paths)
+    local absolute_configs=()
+
+    # Cursor MCP config: ONLY if running under Cursor OR if .cursor directory was explicitly created in the project
+    if [[ "$active_editor" == "cursor" ]]; then
+        absolute_configs+=("${PROJECT_DIR}/.cursor/mcp.json")
+        if [[ -d "${HOME}/.cursor" ]]; then
+            absolute_configs+=("${HOME}/.cursor/mcp.json")
+        fi
+    elif [[ -d "${PROJECT_DIR}/.cursor" && "$active_editor" != "antigravity" ]]; then
+        absolute_configs+=("${PROJECT_DIR}/.cursor/mcp.json")
+    fi
+
+    # VS Code MCP config: ONLY if running under VS Code OR if .vscode directory exists in the project
+    if [[ "$active_editor" == "vscode" ]]; then
+        absolute_configs+=("${PROJECT_DIR}/.vscode/mcp.json")
+    elif [[ -d "${PROJECT_DIR}/.vscode" && "$active_editor" != "antigravity" ]]; then
+        absolute_configs+=("${PROJECT_DIR}/.vscode/mcp.json")
+    fi
+
+    # OS-specific paths for Claude Desktop, Cline, and Roo Code (only if installed and not running under Antigravity/Cursor)
+    if [[ "$active_editor" == "cli" || "$active_editor" == "vscode" ]]; then
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            absolute_configs+=(
+                "${HOME}/Library/Application Support/Claude/claude_desktop_config.json"
+                "${HOME}/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
+                "${HOME}/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json"
+            )
+        else
+            absolute_configs+=(
+                "${HOME}/.config/Claude/claude_desktop_config.json"
+                "${HOME}/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
+                "${HOME}/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json"
+            )
+        fi
+    fi
+
+    local configured_any=false
+
+    # Helper function to inject Graphify configuration into an MCP settings file
+    write_mcp_config() {
+        local path="$1"
+        local is_rel="$2"
+        local parent_dir
+        parent_dir="$(dirname "$path")"
+
+        # Only create/write if:
+        # - It is a relative config (always created for Antigravity)
+        # - The parent directory already exists on the user's system (global/local config for an installed app)
+        if [[ "$is_rel" = "true" || -d "$parent_dir" ]]; then
+            mkdir -p "$parent_dir"
+
+            if [[ ! -f "$path" || ! -s "$path" ]]; then
+                cat > "$path" <<'EOF'
 {
   "mcpServers": {}
 }
 EOF
-    fi
+            fi
 
-    if ! python3 - "$ANTIGRAVITY_MCP_CONFIG" "$PROJECT_DIR" <<'PY'
+            if python3 - "$path" "$PROJECT_DIR" "$is_rel" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 config_path = Path(sys.argv[1])
 project_dir = sys.argv[2]
+is_relative = sys.argv[3].lower() == "true"
 
-with config_path.open("r", encoding="utf-8") as f:
-    config = json.load(f)
+try:
+    with config_path.open("r", encoding="utf-8") as f:
+        config = json.load(f)
+except Exception:
+    config = {}
+
+if not isinstance(config, dict):
+    config = {}
 
 if "mcpServers" not in config:
     config["mcpServers"] = {}
+
+graph_path = "${workspace.path}/graphify-out/graph.json" if is_relative else str(Path(project_dir) / "graphify-out" / "graph.json")
 
 config["mcpServers"]["graphify"] = {
     "command": "uv",
@@ -1302,7 +1383,7 @@ config["mcpServers"]["graphify"] = {
         "mcp",
         "-m",
         "graphify.serve",
-        "${workspace.path}/graphify-out/graph.json"
+        graph_path
     ]
 }
 
@@ -1310,13 +1391,32 @@ with config_path.open("w", encoding="utf-8") as f:
     json.dump(config, f, indent=2)
     f.write("\n")
 
-print("Graphify MCP configured.")
+print("Success")
 PY
-    then
-        die "Failed to configure Graphify MCP"
-    fi
+            then
+                success "Graphify MCP configured at $path"
+                configured_any=true
+            else
+                warn "Failed to configure Graphify MCP at $path"
+            fi
+        fi
+    }
 
-    success "Graphify MCP configured"
+    # Process relative configs
+    for path in "${relative_configs[@]}"; do
+        write_mcp_config "$path" "true"
+    done
+
+    # Process absolute configs
+    for path in "${absolute_configs[@]}"; do
+        write_mcp_config "$path" "false"
+    done
+
+    if [[ "$configured_any" = true ]]; then
+        success "Graphify MCP configured successfully across available environments"
+    else
+        die "Failed to configure Graphify MCP in any configuration path"
+    fi
 }
 
 create_setup_report() {

@@ -5,7 +5,6 @@
 # Ignore local AI setup, agents, and knowledge graph outputs
 .agents/
 .agents.bak/
-.devmind/
 graphify-out/
 AI_SETUP.md
 ARCHITECTURE.md
@@ -45,6 +44,7 @@ yarn-error.log*
 Thumbs.db
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
 
