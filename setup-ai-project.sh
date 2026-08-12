@@ -1434,6 +1434,8 @@ if [[ -z "$DEVMIND_COMMITTING" ]]; then
     if ! command -v devmind &>/dev/null; then
         if [[ -f "./bin/devmind" ]]; then
             DEVMIND_CMD="python3 ./bin/devmind"
+        elif [[ -f "$HOME/.local/bin/devmind" ]]; then
+            DEVMIND_CMD="$HOME/.local/bin/devmind"
         else
             DEVMIND_CMD=""
         fi
@@ -1451,7 +1453,11 @@ if [[ -z "$DEVMIND_COMMITTING" ]]; then
         else
             $DEVMIND_CMD queue "CHORE [$COMMIT_HASH]: $COMMIT_MSG" >/dev/null 2>&1
         fi
-        echo -e "\\033[1;36m[DevMind INFO]\\033[0m Commit queued. Run \\033[0;32mdevmind sync\\033[0m to refresh AI memory and generate ADRs."
+        
+        # Automatically process queue in the background
+        $DEVMIND_CMD sync >/dev/null 2>&1 &
+        
+        echo -e "\\033[1;36m[DevMind INFO]\\033[0m Commit queued and AI memory sync started in background."
     fi
 fi
 # <<< DEVMIND HOOK END <<<'''
