@@ -242,12 +242,23 @@ export class DevMindSidebarProvider implements vscode.TreeDataProvider<DevMindTr
 
         if (element.contextValue === 'category_memory') {
             const memoryDir = path.join(root, '.devmind', 'memory');
-            if (!fs.existsSync(memoryDir)) {
-                return [new DevMindTreeItem('Memory Directory Not Found', vscode.TreeItemCollapsibleState.None, 'info', undefined, 'info')];
-            }
-
-            const files = fs.readdirSync(memoryDir).filter(f => f.endsWith('.md'));
-            return files.map(file => {
+            const actions = [
+                new DevMindTreeItem('Connect Google Drive', vscode.TreeItemCollapsibleState.None, 'action_memory_connect',
+                    { command: 'devmind.memoryConnectDrive', title: 'Connect Google Drive' }, 'plug', 'one-click login'),
+                new DevMindTreeItem('Push Memory to Google Drive', vscode.TreeItemCollapsibleState.None, 'action_memory_push',
+                    { command: 'devmind.memoryPush', title: 'Push Memory' }, 'cloud-upload'),
+                new DevMindTreeItem('Pull Memory from Google Drive', vscode.TreeItemCollapsibleState.None, 'action_memory_pull',
+                    { command: 'devmind.memoryPull', title: 'Pull Memory' }, 'cloud-download'),
+                new DevMindTreeItem('Sync All Projects', vscode.TreeItemCollapsibleState.None, 'action_memory_sync_all',
+                    { command: 'devmind.memorySyncAll', title: 'Sync All Projects' }, 'sync'),
+                new DevMindTreeItem('Chat History', vscode.TreeItemCollapsibleState.None, 'action_memory_history',
+                    { command: 'devmind.memoryOpenHistory', title: 'Open Chat History' }, 'history'),
+            ];
+            // Sync buttons are always shown, even before .devmind/memory/ exists (a pull creates it).
+            const files = fs.existsSync(memoryDir)
+                ? fs.readdirSync(memoryDir).filter(f => f.endsWith('.md') && f !== 'chat-history.md')
+                : [];
+            return [...actions, ...files.map(file => {
                 const filePath = path.join(memoryDir, file);
                 return new DevMindTreeItem(
                     file,
@@ -256,7 +267,7 @@ export class DevMindSidebarProvider implements vscode.TreeDataProvider<DevMindTr
                     { command: 'vscode.open', title: 'Open Memory File', arguments: [vscode.Uri.file(filePath)] },
                     'file-text'
                 );
-            });
+            })];
         }
 
         return [];

@@ -1554,13 +1554,13 @@ hook_code = r'''# >>> DEVMIND SECRET GUARD START >>>
 # (POSIX sh on purpose: this block may be inserted into an existing #!/bin/sh hook.)
 DEVMIND_PUSH_REFS="$(cat)"
 DEVMIND_SCAN_CMD=""
-if [ -f "./bin/devmind" ]; then
-    DEVMIND_SCAN_CMD="python3 ./bin/devmind"
-elif command -v devmind >/dev/null 2>&1; then
-    DEVMIND_SCAN_CMD="devmind"
-elif [ -f "$HOME/.local/bin/devmind" ]; then
-    DEVMIND_SCAN_CMD="python3 $HOME/.local/bin/devmind"
-fi
+# Use the first devmind CLI that actually has the `scan` command (old copies don't).
+for DEVMIND_CAND in "./bin/devmind" "$(command -v devmind 2>/dev/null)" "$HOME/.local/bin/devmind"; do
+    if [ -n "$DEVMIND_CAND" ] && [ -f "$DEVMIND_CAND" ] && grep -q "def cmd_scan" "$DEVMIND_CAND" 2>/dev/null; then
+        DEVMIND_SCAN_CMD="python3 $DEVMIND_CAND"
+        break
+    fi
+done
 if [ -n "$DEVMIND_SCAN_CMD" ]; then
     if ! printf '%s\n' "$DEVMIND_PUSH_REFS" | $DEVMIND_SCAN_CMD scan --pre-push; then
         printf '\033[1;31m[DevMind Secret Guard]\033[0m Push blocked. Fix the items above and push again.\n' >&2
@@ -1605,26 +1605,36 @@ EOF
     esac
 }
 
-# Links DevMind's own first-party skills (skills/ in the DevMind source repo) into the project.
+# Copies DevMind's first-party skills into the project's .agents/skills/. The single source is
+# vscode-extension/resources/skills/ (the same files the VS Code extension bundles in the VSIX
+# and auto-installs on activation; see vscode-extension/src/skillInstaller.ts).
+# Same overwrite policy as the extension: update only copies with `origin: DevMind` and an older
+# `version:`; never touch customised skills.
 map_devmind_skills() {
-    local src_dir="$SCRIPT_SOURCE_DIR/skills"
+    local src_dir="$SCRIPT_SOURCE_DIR/vscode-extension/resources/skills"
     [[ -d "$src_dir" ]] || return 0
     mkdir -p "$SKILLS_DIR"
-    local skill_dir name target mapped=0
+    local skill_dir name target src_ver dst_ver mapped=0
     for skill_dir in "$src_dir"/*/; do
         [[ -f "$skill_dir/SKILL.md" ]] || continue
         name="$(basename "$skill_dir")"
         target="$SKILLS_DIR/$name"
+        src_ver="$(sed -n 's/^[[:space:]]*version:[[:space:]]*\([0-9]*\).*/\1/p' "$skill_dir/SKILL.md" | head -1)"
         if [[ -L "$target" ]]; then
             rm -f "$target"
-        elif [[ -e "$target" ]]; then
-            warn "Local custom skill '$name' already exists. Preserving it."
-            continue
+        elif [[ -f "$target/SKILL.md" ]]; then
+            if ! grep -q '^[[:space:]]*origin:[[:space:]]*DevMind' "$target/SKILL.md"; then
+                warn "Custom skill '$name' found (origin is not DevMind). Preserving it."
+                continue
+            fi
+            dst_ver="$(sed -n 's/^[[:space:]]*version:[[:space:]]*\([0-9]*\).*/\1/p' "$target/SKILL.md" | head -1)"
+            (( ${dst_ver:-0} >= ${src_ver:-0} )) && continue
         fi
-        ln -s "${skill_dir%/}" "$target"
+        mkdir -p "$target"
+        cp -R "${skill_dir%/}/." "$target/"
         mapped=$((mapped + 1))
     done
-    success "Mapped $mapped DevMind skills (secret-guard, ...)"
+    success "Installed/updated $mapped DevMind skills into $SKILLS_DIR"
 }
 
 ###############################################################################
@@ -2225,6 +2235,8 @@ $CLAUDE_MD_BEGIN
 - Database: @DATABASE.md
 - Security: @SECURITY.md
 - Project memory: \`.devmind/memory/\` · ADRs: \`docs/adr/\`
+- **Chat history (read first)**: \`.devmind/memory/chat-history.md\`, i.e. previous AI sessions from all machines, synced via Google Drive. Never commit \`.devmind/memory/\`.
+- Before any \`git push\`: use the \`secret-guard\` skill (\`devmind scan\`).
 - Knowledge graph: \`graphify-out/graph.json\` (report: \`graphify-out/GRAPH_REPORT.md\`). Prefer the \`graphify\` MCP tools for dependency questions; run \`graphify update .\` after structural changes.
 $CLAUDE_MD_END
 EOF
@@ -2244,6 +2256,40 @@ open(path, "w", encoding="utf-8").write(text)
 PY
 }
 
+# Adds a Claude Code SessionEnd hook that pushes AI memory to Google Drive when a session ends.
+# Written to .claude/settings.local.json (per machine, not committed). Runs in the background
+# and never fails the session; it is a no-op until `devmind memory setup` has been run.
+configure_claude_memory_hook() {
+    local settings="$CLAUDE_DIR/settings.local.json"
+    mkdir -p "$CLAUDE_DIR"
+    SETTINGS="$settings" python3 - <<'PY'
+import json, os
+path = os.environ["SETTINGS"]
+marker = "devmind memory push"
+cmd = ('cd "${CLAUDE_PROJECT_DIR:-.}" && '
+       '{ if [ -f bin/devmind ]; then python3 bin/devmind memory push --quiet; '
+       'else devmind memory push --quiet; fi; } >/dev/null 2>&1 &')
+try:
+    data = json.load(open(path)) if os.path.exists(path) else {}
+except ValueError:
+    print(f"WARN: {path} is not valid JSON; skipping SessionEnd memory hook")
+    raise SystemExit(0)
+groups = data.setdefault("hooks", {}).setdefault("SessionEnd", [])
+for g in groups:
+    for h in g.get("hooks", []):
+        if marker in h.get("command", ""):
+            h["command"] = cmd
+            break
+    else:
+        continue
+    break
+else:
+    groups.append({"hooks": [{"type": "command", "command": cmd}]})
+json.dump(data, open(path, "w"), indent=2)
+PY
+    success "Claude Code SessionEnd hook → auto-push AI memory ($settings)"
+}
+
 configure_claude_code() {
     log "Configuring Claude Code integration (CLAUDE.md, .claude/, .mcp.json)..."
 
@@ -2251,6 +2297,7 @@ configure_claude_code() {
     mirror_into_claude "$RULES_DIR" "$CLAUDE_DIR/rules"
     sync_claude_agents
     write_claude_md
+    configure_claude_memory_hook
 
     success "Claude Code: $(find "$CLAUDE_DIR/skills" -mindepth 1 -maxdepth 1 | wc -l) skills, $(find "$CLAUDE_DIR/agents" -mindepth 1 -maxdepth 1 | wc -l) agents, $(find "$CLAUDE_DIR/rules" -mindepth 1 -maxdepth 1 | wc -l) rules linked; CLAUDE.md updated"
 }
@@ -2285,10 +2332,13 @@ Welcome AI Agent. This document defines the operating rules, tech stack, and exe
 - **NEVER** perform large refactors without Graphify dependency analysis.
 - **NEVER** comment out failing tests to fake pass status.
 - **NEVER** modify core framework files directly.
+- **NEVER** commit AI memory or chat history (\`.devmind/memory/\`). Git = code only; memory syncs via Google Drive (\`devmind memory push/pull\`).
+- **NEVER** bypass the Secret Guard pre-push hook (\`--no-verify\`, \`DEVMIND_SKIP_SECRET_SCAN\`). Use the \`secret-guard\` skill before every push.
 
 ---
 
 ## 📋 Mandatory Steps Before Changing Code
+0. **Read Chat History**: Skim the latest entries in \`.devmind/memory/chat-history.md\` (previous sessions from all machines) before starting.
 1. **Search & Understand**: Search codebase for existing patterns and utilities.
 2. **Graphify Dependency Check**: Inspect \`graphify-out/graph.json\` for module coupling.
 3. **Implementation Plan**: Present a clear plan for complex changes.
@@ -2647,7 +2697,8 @@ if os.path.exists(gitignore_path):
         '.mcp.json',
         '.claude/skills/',
         '.claude/agents/',
-        '.claude/rules/'
+        '.claude/rules/',
+        '.claude/settings.local.json'
     ]
     
     lines = content.splitlines()

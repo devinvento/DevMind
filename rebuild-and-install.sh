@@ -121,6 +121,20 @@ if command -v cursor &> /dev/null; then
     success "Cursor extension updated!"
 fi
 
+# Antigravity IDE: its CLI is usually not on PATH (installed under ~/.local/opt/antigravity-ide*/).
+ANTIGRAVITY_CLI="$(command -v antigravity-ide 2>/dev/null || true)"
+if [[ -z "$ANTIGRAVITY_CLI" ]]; then
+    for cand in "$HOME"/.local/opt/antigravity-ide*/AntigravityIDE/bin/antigravity-ide \
+                /opt/antigravity-ide*/bin/antigravity-ide /usr/share/antigravity-ide*/bin/antigravity-ide; do
+        [[ -x "$cand" ]] && { ANTIGRAVITY_CLI="$cand"; break; }
+    done
+fi
+if [[ -n "$ANTIGRAVITY_CLI" ]]; then
+    log "Installing updated extension into Antigravity IDE..."
+    "$ANTIGRAVITY_CLI" --install-extension "$VSIX_PATH" --force || warn "Could not auto-install VSIX into Antigravity IDE."
+    success "Antigravity IDE extension updated! Run 'Developer: Reload Window' to load it."
+fi
+
 echo -e "${CYAN}====================================================${NC}"
 echo -e "${GREEN}   DevMind VSIX Rebuilt & Installed Successfully! 🎉${NC}"
 echo -e "${YELLOW}   Output: $VSIX_PATH${NC}"

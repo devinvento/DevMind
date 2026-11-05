@@ -42,11 +42,54 @@ const commands_1 = require("./commands");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const child_process = __importStar(require("child_process"));
+const skillInstaller_1 = require("./skillInstaller");
+const memorySync_1 = require("./memorySync");
+let memorySync;
+/**
+ * Writes the skills bundled in the VSIX (resources/skills/) into every open workspace folder's
+ * .agents/skills/ and .claude/skills/. Runs on activation (right after the VSIX is installed and
+ * on every window open), when folders are added, and from the "DevMind: Install AI Skills" command.
+ */
+function ensureBundledSkills(context, runner, notify) {
+    const bundled = path.join(context.extensionPath, 'resources', 'skills');
+    const roots = new Set((vscode.workspace.workspaceFolders || []).map(f => f.uri.fsPath));
+    const override = runner.getWorkspaceRoot();
+    if (override) {
+        roots.add(override);
+    }
+    const changed = [];
+    for (const root of roots) {
+        try {
+            for (const r of (0, skillInstaller_1.installBundledSkills)(bundled, root)) {
+                if (r.action === 'created' || r.action === 'updated') {
+                    changed.push(`${r.action} ${path.basename(root)}/${r.target}`);
+                }
+            }
+        }
+        catch (err) {
+            console.error(`DevMind: failed to install skills into ${root}:`, err);
+            if (notify) {
+                vscode.window.showErrorMessage(`DevMind: Could not install AI skills in ${root}: ${err.message}`);
+            }
+        }
+    }
+    if (changed.length) {
+        console.log(`DevMind skills: ${changed.join(', ')}`);
+    }
+    if (notify) {
+        vscode.window.showInformationMessage(changed.length
+            ? `DevMind: AI skills installed (${changed.length}): secret-guard → .agents/skills & .claude/skills`
+            : 'DevMind: AI skills already up to date.');
+    }
+}
 function activate(context) {
     console.log('Activating DevMind Enterprise AI OS VS Code Extension...');
     const runner = new devmindRunner_1.DevMindRunner();
     runner.setContext(context);
+    context.subscriptions.push(vscode.commands.registerCommand('devmind.installSkills', () => ensureBundledSkills(context, runner, true)), vscode.workspace.onDidChangeWorkspaceFolders(() => ensureBundledSkills(context, runner, false)));
     const sidebarProvider = new devmindSidebar_1.DevMindSidebarProvider(runner);
+    memorySync = new memorySync_1.MemorySync(context, runner, () => sidebarProvider.refresh());
+    const startMemorySync = () => { memorySync?.start().catch(err => console.error('DevMind memory sync:', err)); };
     // Register Sidebar Tree View
     const treeView = vscode.window.createTreeView('devmind.sidebarView', {
         treeDataProvider: sidebarProvider,
@@ -73,6 +116,8 @@ function activate(context) {
             if (isDevMindRepo) {
                 statusBarItem.text = '$(brain) DevMind: Ready (DevMode)';
                 statusBarItem.tooltip = 'DevMind Development Mode active';
+                ensureBundledSkills(context, runner, false);
+                startMemorySync();
                 return;
             }
             vscode.window.withProgress({
@@ -84,6 +129,10 @@ function activate(context) {
                 return new Promise((resolve) => {
                     const execEnv = { ...process.env, NO_COLOR: '1', TERM: 'dumb' };
                     child_process.exec(`echo "Y" | "${setupScript}"`, { cwd: root, env: execEnv }, async (error) => {
+                        // Install skills only AFTER setup: creating .agents/ earlier would stop
+                        // this auto-setup from ever running (it is triggered by .agents/ missing).
+                        ensureBundledSkills(context, runner, false);
+                        startMemorySync();
                         if (error) {
                             vscode.window.showErrorMessage(`DevMind Auto-Install Failed: ${error.message}`);
                             resolve(false);
@@ -105,6 +154,8 @@ function activate(context) {
             });
         }
         else {
+            ensureBundledSkills(context, runner, false);
+            startMemorySync();
             // Fetch initial score asynchronously without blocking activation
             runner.getEngineeringScore().then(score => {
                 statusBarItem.text = `$(brain) DevMind: ${score}%`;
@@ -120,5 +171,8 @@ function activate(context) {
     }
     console.log('DevMind Extension Activated Successfully!');
 }
-function deactivate() { }
+function deactivate() {
+    // Upload memory one last time when the window closes (detached process, does not block VS Code).
+    memorySync?.pushOnExit();
+}
 //# sourceMappingURL=extension.js.map

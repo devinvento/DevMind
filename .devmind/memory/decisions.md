@@ -82,3 +82,9 @@ This document records the major architectural choices made in the project.
 - **Decision**: Design and implementation plan generated for task: FEATURE [14fd4a0]: feat: introduce stack-based project profiles and automate background synchronization in setup script
 - **Reason**: Automatically logged during feature planning command execution.
 - **Status**: Proposed
+
+### 14. Implement Feature: FEATURE [6e54fba]: feat: add automated secret guard scanner and frappe framework detection logic
+- **Date**: 2026-11-05
+- **Decision**: Design and implementation plan generated for task: FEATURE [6e54fba]: feat: add automated secret guard scanner and frappe framework detection logic
+- **Reason**: Automatically logged during feature planning command execution.
+- **Status**: Proposed

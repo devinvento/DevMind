@@ -35,6 +35,18 @@ export class DevMindRunner {
         return undefined;
     }
 
+    /** Features the extension needs; old per-project copies of bin/devmind may lack them. */
+    private static readonly REQUIRED_CLI_MARKERS = ['def cmd_memory', 'def memory_connect', 'def cmd_scan'];
+
+    private cliSupportsFeatures(file: string): boolean {
+        try {
+            const src = fs.readFileSync(file, 'utf8');
+            return DevMindRunner.REQUIRED_CLI_MARKERS.every(m => src.includes(m));
+        } catch {
+            return false;
+        }
+    }
+
     public getCliCommand(workspaceRoot: string): string {
         const config = vscode.workspace.getConfiguration('devmind');
         const customPath = config.get<string>('cliPath');
@@ -42,16 +54,17 @@ export class DevMindRunner {
             return customPath;
         }
 
-        // Check bin/devmind inside workspace
+        // Prefer the first CLI copy that has every feature this extension uses. Projects set up
+        // earlier keep an old bin/devmind copy (no `memory`/`scan` commands) until setup is re-run.
         const localBin = path.join(workspaceRoot, 'bin', 'devmind');
-        if (fs.existsSync(localBin)) {
-            return `python3 "${localBin}"`;
-        }
-
-        // Check ~/.local/bin/devmind
         const homeBin = path.join(process.env.HOME || '', '.local', 'bin', 'devmind');
-        if (fs.existsSync(homeBin)) {
-            return `python3 "${homeBin}"`;
+        const candidates = [localBin, homeBin].filter(p => fs.existsSync(p));
+        const capable = candidates.find(p => this.cliSupportsFeatures(p));
+        if (capable) {
+            return `python3 "${capable}"`;
+        }
+        if (candidates.length) {
+            return `python3 "${candidates[0]}"`;
         }
 
         // Fallback to system command
@@ -131,6 +144,10 @@ export class DevMindRunner {
             return parseInt(match[1], 10);
         }
         return 85;
+    }
+
+    public log(line: string): void {
+        this.outputChannel.appendLine(this.stripAnsi(line));
     }
 
     public showOutputChannel(): void {

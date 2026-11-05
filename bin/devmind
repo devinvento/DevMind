@@ -9,6 +9,7 @@ Commands:
   devmind blame <file>     - Git intelligence & change rationale for a file
   devmind audit security   - Run automated security scan (secrets, SQLi, XSS, Auth) & score
   devmind scan [mode]      - Secret Guard: block sensitive data before push (--staged|--pre-push|--range|--all)
+  devmind memory <sub>     - Sync AI memory/chat history with Google Drive (connect|setup|capture|push|pull|sync|sync-all|status)
   devmind db analyze       - Analyze database schema, foreign keys, missing indexes & N+1 queries
   devmind review           - AI Code Review bot inspecting git diff
   devmind adr create <title> - Create a new Architecture Decision Record (docs/adr/)
@@ -1192,7 +1193,8 @@ SECRET_PATTERNS = [
 # Values that look like placeholders rather than real secrets.
 PLACEHOLDER_RE = re.compile(
     r"(?i)^(?:x{3,}|\*{3,}|\.{3,}|changeme|change_me|password|pass|passwd|pwd|secret|example|sample|dummy|test|"
-    r"testing|null|none|your[_-].*|<.*>|\$\{.*\}|\{\{.*\}\}|%.*%|env\(.*|getenv.*|process\.env.*|os\.environ.*)$"
+    r"testing|null|none|your[_-].*|<.*>|\[REDACTED:.*\]|\$\{.*\}|\{\{.*\}\}|%.*%|env\(.*|getenv.*|process\.env.*|"
+    r"os\.environ.*)$"
 )
 
 # Framework validation rules / translation strings that look like `'password' => '...'`.
@@ -1457,6 +1459,887 @@ def cmd_scan(project_dir, args):
     sys.exit(1)
 
 
+# ---------------------------------------------------------------------------
+# AI memory sync (Git = code, Google Drive = memory)
+#   devmind memory setup|capture|push|pull|sync|sync-all|status|index
+# ---------------------------------------------------------------------------
+
+MEMORY_CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "devmind"
+MEMORY_CONFIG_FILE = MEMORY_CONFIG_DIR / "memory.json"
+MEMORY_PROJECTS_FILE = MEMORY_CONFIG_DIR / "memory-projects.json"
+MEMORY_DEFAULT_REMOTE = "devmind-gdrive:DevMind-Memory"
+MEMORY_STATE_FILE = ".sync-state.json"
+MEMORY_INDEX_FILE = "chat-history.md"
+MEMORY_INDEX_LIMIT = 30
+SESSION_MSG_LIMIT = 4000              # chars per message in the session file's Conversation section
+SESSION_CONVERSATION_BUDGET = 120000  # total chars of dialogue kept per session file (newest first)
+TRANSCRIPTS_DIR = "transcripts"       # raw (redacted, gzipped) Claude transcripts on Drive, for /resume
+CLAUDE_MEMORY_REMOTE_DIR = "claude-memory"  # Claude Code auto-memory (~/.claude/projects/<slug>/memory/*.md)
+CLAUDE_MEMORY_INDEX = "MEMORY.md"
+# Never leave the machine: generated index (rebuilt after pull) and local sync state.
+MEMORY_SYNC_EXCLUDES = [MEMORY_INDEX_FILE, MEMORY_STATE_FILE, "*.tmp", ".DS_Store"]
+EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+REMINDER_BLOCK_RE = re.compile(
+    r"<(system-reminder|ide_selection|ide_opened_file|local-command-[a-z]+|command-[a-z]+|pasted_content)[^>]*>.*?</\1[^>]*>",
+    re.DOTALL)
+
+
+def _load_json(path, default):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return default
+
+
+def _save_json(path, data):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
+    tmp.replace(path)
+
+
+def _memory_config():
+    import socket
+    cfg = _load_json(MEMORY_CONFIG_FILE, {})
+    remote = os.environ.get("DEVMIND_MEMORY_REMOTE") or cfg.get("remote") or MEMORY_DEFAULT_REMOTE
+    machine = os.environ.get("DEVMIND_MACHINE") or cfg.get("machine") or socket.gethostname().split(".")[0]
+    machine = re.sub(r"[^A-Za-z0-9-]+", "-", machine).strip("-").lower() or "machine"
+    transcripts = os.environ.get("DEVMIND_MEMORY_TRANSCRIPTS", str(cfg.get("transcripts", True))).lower() not in ("0", "false", "no")
+    return {"remote": remote.rstrip("/"), "machine": machine, "configured": MEMORY_CONFIG_FILE.exists(),
+            "transcripts": transcripts}
+
+
+def _is_rclone_remote(remote):
+    # "gdrive:DevMind-Memory" -> rclone; "/mnt/gdrive/DevMind-Memory" or "~/GoogleDrive/x" -> plain folder
+    return bool(re.match(r"^[A-Za-z0-9_\-. ]+:", remote)) and not re.match(r"^[A-Za-z]:[\\/]", remote)
+
+
+def _redact(text):
+    """Mask secrets and e-mail addresses before memory leaves the machine."""
+    def sub_for(rule_id):
+        def repl(m):
+            whole = m.group(0)
+            value = m.group(1) if m.groups() and m.group(1) else whole
+            if rule_id in ("hardcoded-credential", "db-url-password") and (
+                    PLACEHOLDER_RE.match(value) or VALIDATION_RULE_RE.search(value)):
+                return whole
+            return whole.replace(value, f"[REDACTED:{rule_id}]")
+        return repl
+    for rule_id, _desc, rx in SECRET_PATTERNS:
+        text = rx.sub(sub_for(rule_id), text)
+    return EMAIL_RE.sub("[REDACTED:email]", text)
+
+
+def _repo_root(project_dir):
+    rc, out, _ = _git(project_dir, "rev-parse", "--show-toplevel")
+    return Path(out.strip()) if rc == 0 and out.strip() else Path(project_dir).resolve()
+
+
+def _project_key(root):
+    """Stable cross-machine project id from the git remote URL (paths differ per machine)."""
+    rc, url, _ = _git(root, "remote", "get-url", "origin")
+    url = url.strip()
+    if rc == 0 and url:
+        u = re.sub(r"^[a-z+]+://", "", url)          # https://, ssh://
+        u = re.sub(r"^[^@/]+@", "", u)               # git@, user:token@
+        u = u.replace(":", "/", 1) if re.match(r"^[^/]+:[^/]", u) else u  # scp-style host:path
+        u = re.sub(r"\.git$", "", u.rstrip("/"))
+        return re.sub(r"[^A-Za-z0-9._-]+", "_", u).strip("_").lower()
+    return "local_" + re.sub(r"[^A-Za-z0-9._-]+", "_", root.name).lower()
+
+
+def _memory_dir(root):
+    d = root / ".devmind" / "memory"
+    (d / "sessions").mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _register_project(root):
+    projects = _load_json(MEMORY_PROJECTS_FILE, [])
+    if str(root) not in projects:
+        projects.append(str(root))
+        _save_json(MEMORY_PROJECTS_FILE, sorted(projects))
+
+
+def _claude_sessions_dir(root):
+    return Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(root))
+
+
+def _clean_user_text(text):
+    text = REMINDER_BLOCK_RE.sub("", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _summarize_claude_session(jsonl_path):
+    """Heuristic (offline, no LLM) summary of a Claude Code session transcript."""
+    title, branch, start, end = None, None, None, None
+    requests, files, commands, last_text = [], [], [], ""
+    conversation = []  # [("You"|"Claude", text)] in order: the full dialogue, without tool I/O
+    with open(jsonl_path, errors="ignore") as fh:
+        for line in fh:
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            t = d.get("type")
+            if t == "ai-title" and d.get("aiTitle"):
+                title = d["aiTitle"]
+            if t not in ("user", "assistant") or d.get("isSidechain"):
+                continue
+            ts = d.get("timestamp")
+            if ts:
+                start = start or ts
+                end = ts
+            branch = d.get("gitBranch") or branch
+            content = (d.get("message") or {}).get("content")
+            items = [{"type": "text", "text": content}] if isinstance(content, str) else (content or [])
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                if t == "user" and it.get("type") == "text":
+                    txt = _clean_user_text(it.get("text", ""))
+                    if txt and not txt.startswith(("[Request interrupted", "Caveat:")):
+                        requests.append(txt[:400] + ("…" if len(txt) > 400 else ""))
+                        conversation.append(("You", txt))
+                elif t == "assistant" and it.get("type") == "text" and it.get("text", "").strip():
+                    last_text = it["text"].strip()
+                    conversation.append(("Claude", last_text))
+                elif t == "assistant" and it.get("type") == "tool_use":
+                    inp = it.get("input") or {}
+                    if it.get("name") in ("Edit", "Write", "NotebookEdit", "MultiEdit"):
+                        fp = inp.get("file_path") or inp.get("notebook_path")
+                        if fp and fp not in files:
+                            files.append(fp)
+                    elif it.get("name") == "Bash" and inp.get("description"):
+                        commands.append(inp["description"])
+    return {"title": title, "branch": branch, "start": start, "end": end, "requests": requests,
+            "files": files, "commands": commands, "outcome": last_text, "conversation": conversation}
+
+
+def _render_session_md(s, session_id, machine, root):
+    def rel(p):
+        try:
+            return str(Path(p).resolve().relative_to(root))
+        except ValueError:
+            return p
+    title = (s["title"] or (s["requests"][0][:80] if s["requests"] else "Untitled session")).replace("\n", " ")
+    lines = [
+        "---",
+        f"title: {json.dumps(title, ensure_ascii=False)}",
+        f"session: {session_id}",
+        f"machine: {machine}",
+        "tool: claude-code",
+        f"start: {s['start'] or ''}",
+        f"end: {s['end'] or ''}",
+        f"branch: {s['branch'] or ''}",
+        f"files_changed: {len(s['files'])}",
+        "---",
+        "",
+        f"# {title}",
+        "",
+        "## User requests",
+    ]
+    lines += [f"{i}. {r}" for i, r in enumerate(s["requests"][:20], 1)] or ["_none_"]
+    if len(s["requests"]) > 20:
+        lines.append(f"… and {len(s['requests']) - 20} more")
+    lines += ["", "## Files changed"]
+    lines += [f"- `{rel(f)}`" for f in s["files"][:60]] or ["_none_"]
+    if s["commands"]:
+        lines += ["", "## Commands run (descriptions)"]
+        lines += [f"- {c}" for c in s["commands"][:25]]
+        if len(s["commands"]) > 25:
+            lines.append(f"- … and {len(s['commands']) - 25} more")
+    outcome = s["outcome"][:2500] + ("\n\n…(truncated)" if len(s["outcome"]) > 2500 else "")
+    lines += ["", "## Final outcome (last assistant message)", "", outcome or "_none_", ""]
+
+    # Full dialogue (newest kept when over budget) so another machine's AI has the real context.
+    conv = s.get("conversation") or []
+    kept, used = [], 0
+    for who, text in reversed(conv):
+        t = text if len(text) <= SESSION_MSG_LIMIT else text[:SESSION_MSG_LIMIT] + "\n…(message truncated)"
+        if used + len(t) > SESSION_CONVERSATION_BUDGET and kept:
+            break
+        kept.append((who, t))
+        used += len(t)
+    kept.reverse()
+    lines += ["## Conversation", ""]
+    if len(kept) < len(conv):
+        lines += [f"_{len(conv) - len(kept)} earlier message(s) omitted. Resume the full session with "
+                  f"`claude --resume {session_id}` after `devmind memory pull`._", ""]
+    for who, t in kept:
+        quoted = "\n".join("> " + l if l else ">" for l in t.splitlines())
+        lines += [f"**{who}:**", "", quoted, ""]
+    return _redact("\n".join(lines))
+
+
+def _parse_frontmatter(text):
+    m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+    meta = {}
+    if m:
+        for l in m.group(1).splitlines():
+            if ":" in l:
+                k, v = l.split(":", 1)
+                v = v.strip()
+                if v.startswith('"'):
+                    try:
+                        v = json.loads(v)
+                    except ValueError:
+                        pass
+                meta[k.strip()] = v
+    return meta
+
+
+def memory_capture(root, quiet=False):
+    """Create/refresh .devmind/memory/sessions/<date>_<machine>_<id>.md from Claude Code transcripts."""
+    cfg = _memory_config()
+    mem = _memory_dir(root)
+    state = _load_json(mem / MEMORY_STATE_FILE, {})
+    captured = state.setdefault("captured", {})
+    imported = state.get("imported", {})
+    src = _claude_sessions_dir(root)
+    written = 0
+    if src.is_dir():
+        for jl in sorted(src.glob("*.jsonl")):
+            sid = jl.stem
+            mtime = jl.stat().st_mtime
+            if captured.get(sid, {}).get("mtime") == mtime:
+                continue
+            if imported.get(sid, {}).get("mtime") == mtime:
+                continue  # pulled from another machine and not continued here: its summary is theirs
+            s = _summarize_claude_session(jl)
+            if not s["requests"]:
+                continue  # empty / aborted session
+            date = (s["start"] or datetime.fromtimestamp(mtime).isoformat())[:10]
+            name = f"{date}_{cfg['machine']}_{sid[:8]}.md"
+            (mem / "sessions" / name).write_text(_render_session_md(s, sid, cfg["machine"], root))
+            captured[sid] = {"mtime": mtime, "file": name}
+            written += 1
+    _save_json(mem / MEMORY_STATE_FILE, state)
+    memory_index(root)
+    if not quiet:
+        log_ok(f"Captured {written} new/updated session(s) from {src}")
+    return written
+
+
+def memory_index(root):
+    """Rebuild chat-history.md (newest first) from all machines' session files."""
+    mem = _memory_dir(root)
+    entries = []
+    for f in (mem / "sessions").glob("*.md"):
+        meta = _parse_frontmatter(f.read_text(errors="ignore"))
+        entries.append((meta.get("start") or f.name, f.name, meta))
+    entries.sort(reverse=True)
+    out = [
+        "# AI Chat History",
+        "",
+        "> Auto-generated by `devmind memory index`. Do not edit, and never commit (git = code only).",
+        "> Synced across machines via Google Drive (`devmind memory push/pull`).",
+        "> **AI agents: read the latest entries before starting work.** Full notes are in `sessions/`.",
+        "",
+        "| Date | Machine | Title | Files | Notes |",
+        "|---|---|---|---|---|",
+    ]
+    for start, name, meta in entries[:MEMORY_INDEX_LIMIT]:
+        title = str(meta.get("title", name)).replace("|", "\\|")
+        out.append(f"| {str(start)[:16].replace('T', ' ')} | {meta.get('machine', '?')} | {title} | "
+                   f"{meta.get('files_changed', '?')} | [open](sessions/{name}) |")
+    if len(entries) > MEMORY_INDEX_LIMIT:
+        out += ["", f"_{len(entries) - MEMORY_INDEX_LIMIT} older session(s) in `sessions/`._"]
+    if not entries:
+        out.append("| — | — | No sessions captured yet | — | — |")
+    (mem / MEMORY_INDEX_FILE).write_text("\n".join(out) + "\n")
+    return len(entries)
+
+
+RCLONE_DRIVE_REMOTE = "devmind-gdrive"      # dedicated rclone remote, never clashes with the user's own
+RCLONE_DRIVE_FOLDER = "DevMind-Memory"
+RCLONE_DOWNLOAD_BASE = "https://downloads.rclone.org"
+
+
+def _rclone_bin():
+    """rclone on PATH, or the copy DevMind installs into ~/.local/bin (often not on VS Code's PATH)."""
+    import shutil
+    found = shutil.which("rclone")
+    if found:
+        return found
+    for d in (os.environ.get("DEVMIND_RCLONE_DIR"), str(Path.home() / ".local" / "bin")):
+        if d and (Path(d) / "rclone").is_file() and os.access(Path(d) / "rclone", os.X_OK):
+            return str(Path(d) / "rclone")
+    return None
+
+
+def _rclone_remote_exists(remote_spec):
+    rc = _rclone_bin()
+    if not rc:
+        return False
+    name = remote_spec.split(":", 1)[0] + ":"
+    res = subprocess.run([rc, "listremotes"], text=True, capture_output=True)
+    return res.returncode == 0 and name in res.stdout.split()
+
+
+def _require_backend(cfg):
+    if not _is_rclone_remote(cfg["remote"]):
+        return True
+    if not _rclone_bin() or not _rclone_remote_exists(cfg["remote"]):
+        log_err("Google Drive is not connected yet. Run:")
+        print("    devmind memory connect        (or click \"Connect Google Drive\" in the DevMind VS Code extension)")
+        return False
+    return True
+
+
+def _step(msg):
+    """Progress marker parsed by the VS Code extension."""
+    print(f"DEVMIND_STEP: {msg}", flush=True)
+
+
+def _install_rclone(dest_dir):
+    """Download the official rclone release, verify its SHA256, install the binary into dest_dir."""
+    import platform, hashlib, tempfile, zipfile, urllib.request
+    system = {"linux": "linux", "darwin": "osx"}.get(platform.system().lower())
+    arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64",
+            "armv7l": "arm-v7", "i686": "386", "i386": "386"}.get(platform.machine().lower())
+    if not system or not arch:
+        raise RuntimeError(f"Automatic rclone install is not supported on {platform.system()} {platform.machine()}. "
+                           "Install it from https://rclone.org/downloads/ and run `devmind memory connect` again.")
+
+    def fetch(url):
+        req = urllib.request.Request(url, headers={"User-Agent": "DevMind-CLI"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.read()
+
+    version = fetch(f"{RCLONE_DOWNLOAD_BASE}/version.txt").decode().strip().split()[-1]  # "rclone v1.75.2"
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", version):
+        raise RuntimeError(f"Unexpected rclone version string: {version!r}")
+    zip_name = f"rclone-{version}-{system}-{arch}.zip"
+    _step(f"Downloading rclone {version} ({system}/{arch})…")
+    data = fetch(f"{RCLONE_DOWNLOAD_BASE}/{version}/{zip_name}")
+    sums = fetch(f"{RCLONE_DOWNLOAD_BASE}/{version}/SHA256SUMS").decode(errors="ignore")
+    expected = next((l.split()[0] for l in sums.splitlines() if l.strip().endswith(zip_name)), None)
+    actual = hashlib.sha256(data).hexdigest()
+    if not expected or expected.lower() != actual:
+        raise RuntimeError(f"Checksum mismatch for {zip_name}. Refusing to install.")
+
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="devmind-rclone-") as tmp:
+        zpath = Path(tmp) / zip_name
+        zpath.write_bytes(data)
+        with zipfile.ZipFile(zpath) as zf:
+            member = next((m for m in zf.namelist() if m.rstrip("/").endswith("/rclone")), None)
+            if not member:
+                raise RuntimeError("rclone binary not found inside the release zip.")
+            target = dest_dir / "rclone"
+            with zf.open(member) as src, open(str(target) + ".tmp", "wb") as out:
+                out.write(src.read())
+            os.chmod(str(target) + ".tmp", 0o755)
+            os.replace(str(target) + ".tmp", target)
+    return str(dest_dir / "rclone")
+
+
+def _parse_authorize_token(output):
+    """Extract the OAuth token JSON from `rclone authorize` output.
+
+    Older rclone prints the token JSON itself between the paste markers. Newer rclone (when called
+    with a base64 config blob) prints a base64 blob such as {"token": "<token JSON string>"}.
+    Returns compact token JSON, or None.
+    """
+    import base64
+    m = re.search(r"--->\s*(.+?)\s*<---End paste", output, re.DOTALL)
+    if not m:
+        return None
+    payload = m.group(1).strip()
+
+    def as_token(obj):
+        if isinstance(obj, dict) and "access_token" in obj:
+            return json.dumps(obj, separators=(",", ":"))
+        if isinstance(obj, dict) and "token" in obj:
+            inner = obj["token"]
+            if isinstance(inner, str):
+                try:
+                    inner = json.loads(inner)
+                except ValueError:
+                    return None
+            return as_token(inner)
+        return None
+
+    try:
+        return as_token(json.loads(payload))
+    except ValueError:
+        pass
+    compact = re.sub(r"\s+", "", payload)
+    for decode in (base64.urlsafe_b64decode, base64.b64decode):
+        try:
+            return as_token(json.loads(decode(compact + "=" * (-len(compact) % 4)).decode()))
+        except (ValueError, UnicodeDecodeError, TypeError):
+            continue
+    return None
+
+
+def _rclone_config_path(rc):
+    res = subprocess.run([rc, "config", "file"], text=True, capture_output=True)
+    lines = [l.strip() for l in res.stdout.splitlines() if l.strip()]
+    return Path(lines[-1]) if lines else Path.home() / ".config" / "rclone" / "rclone.conf"
+
+
+def _write_rclone_remote(rc, name, token_json):
+    """Add/replace the [name] section of rclone.conf (our dedicated remote only)."""
+    conf = _rclone_config_path(rc)
+    text = conf.read_text() if conf.exists() else ""
+    if "RCLONE_ENCRYPT_V0" in text:
+        raise RuntimeError("Your rclone config is password-encrypted. Run `rclone config` and add a Google Drive "
+                           f"remote named '{name}' with scope 'drive.file' manually.")
+    text = re.sub(rf"(?ms)^\[{re.escape(name)}\]\n.*?(?=^\[|\Z)", "", text).rstrip()
+    section = f"[{name}]\ntype = drive\nscope = drive.file\ntoken = {token_json}\n"
+    conf.parent.mkdir(parents=True, exist_ok=True)
+    conf.write_text((text + "\n\n" if text else "") + section)
+    os.chmod(conf, 0o600)
+
+
+def memory_connect(machine=None, open_browser=True, remote_name=RCLONE_DRIVE_REMOTE, folder=RCLONE_DRIVE_FOLDER):
+    """One-step Google Drive connection: install rclone → browser login → save remote → verify."""
+    import base64
+    try:
+        sys.stdout.reconfigure(line_buffering=True)  # the VS Code extension reads this live via a pipe
+    except AttributeError:
+        pass
+    remote = f"{remote_name}:{folder}"
+
+    # 1. rclone
+    rc = _rclone_bin()
+    if not rc:
+        _step("Installing rclone (no sudo needed)…")
+        dest = os.environ.get("DEVMIND_RCLONE_DIR") or str(Path.home() / ".local" / "bin")
+        rc = _install_rclone(dest)
+        log_ok(f"rclone installed: {rc}")
+    else:
+        log_ok(f"rclone found: {rc}")
+
+    # 2. Google login (skip if our remote already works)
+    already = _rclone_remote_exists(remote) and subprocess.run(
+        [rc, "lsd", f"{remote_name}:", "--max-depth", "1"], capture_output=True, timeout=60).returncode == 0
+    if already:
+        log_ok(f"Google Drive already connected (rclone remote '{remote_name}').")
+    else:
+        _step("Waiting for Google login in your browser…")
+        print("A browser window will ask you to sign in to Google and allow access.\n"
+              "DevMind uses the 'drive.file' scope: it can ONLY see files it creates itself, nothing else in your Drive.",
+              flush=True)
+        # rclone expects URL-safe base64 without padding
+        blob = base64.urlsafe_b64encode(json.dumps({"scope": "drive.file"}).encode()).decode().rstrip("=")
+        cmd = [rc, "authorize", "drive", blob] + ([] if open_browser else ["--auth-no-open-browser"])
+        import signal
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        # If we are cancelled/terminated, take rclone (and its port 53682 listener) down with us.
+        prev_term = signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+        captured, in_token = [], False
+        noise = ("Make sure your Redirect URL", "Config file", "not found - using defaults")
+        try:
+            for line in proc.stdout:
+                captured.append(line)
+                if "Paste the following" in line:
+                    in_token = True
+                    continue
+                if in_token:
+                    continue  # never echo the OAuth token
+                url = re.search(r"https?://127\.0\.0\.1:\d+/auth\S*", line)
+                if url:
+                    print(f"DEVMIND_AUTH_URL: {url.group(0)}", flush=True)
+                    print(f"If the browser did not open, visit: {url.group(0)}", flush=True)
+                elif line.strip() and not any(n in line for n in noise):
+                    print(line.rstrip(), flush=True)
+            proc.wait()
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            signal.signal(signal.SIGTERM, prev_term)
+        out = "".join(captured)
+        if proc.returncode != 0:
+            raise RuntimeError("Google login did not complete (cancelled, timed out or denied).")
+        token = _parse_authorize_token(out)
+        if not token:
+            raise RuntimeError("Google login succeeded but DevMind could not read the token from rclone's "
+                               "output. Please report this (the token itself was not logged).")
+        _write_rclone_remote(rc, remote_name, token)
+        log_ok(f"Google account authorised; saved as rclone remote '{remote_name}'.")
+
+    # 3. Create the folder & verify
+    _step(f"Creating '{folder}' on Google Drive and verifying…")
+    res = subprocess.run([rc, "mkdir", remote], text=True, capture_output=True, timeout=120)
+    if res.returncode != 0:
+        raise RuntimeError(f"Could not create {remote}: {res.stderr.strip()[:300]}")
+    res = subprocess.run([rc, "lsjson", remote, "--max-depth", "1"], text=True, capture_output=True, timeout=120)
+    if res.returncode != 0:
+        raise RuntimeError(f"Could not list {remote}: {res.stderr.strip()[:300]}")
+
+    # 4. Point DevMind at it
+    cfg = _load_json(MEMORY_CONFIG_FILE, {})
+    cfg["remote"] = remote
+    if machine:
+        cfg["machine"] = machine
+    cfg.setdefault("machine", _memory_config()["machine"])
+    _save_json(MEMORY_CONFIG_FILE, cfg)
+    log_ok(f"Google Drive connected → {remote}  (machine: {cfg['machine']})")
+    print("DEVMIND_CONNECTED", flush=True)
+    return True
+
+
+def memory_disconnect(remote_name=RCLONE_DRIVE_REMOTE):
+    rc = _rclone_bin()
+    if rc and _rclone_remote_exists(f"{remote_name}:"):
+        subprocess.run([rc, "config", "delete", remote_name], capture_output=True)
+    cfg = _load_json(MEMORY_CONFIG_FILE, {})
+    if cfg.get("remote", "").startswith(f"{remote_name}:"):
+        cfg.pop("remote")
+        _save_json(MEMORY_CONFIG_FILE, cfg)
+    log_ok("Google Drive disconnected on this machine. Your memory files on Drive were NOT deleted. "
+           "To also revoke access: https://myaccount.google.com/permissions")
+
+
+def _transfer(src, dst, cfg, exclude_dirs=()):
+    """Copy src -> dst, never deleting anything; newer file wins. Returns (ok, message)."""
+    import shutil, fnmatch
+    if _is_rclone_remote(cfg["remote"]):
+        cmd = [_rclone_bin() or "rclone", "copy", str(src), str(dst), "--update", "--create-empty-src-dirs"]
+        for ex in MEMORY_SYNC_EXCLUDES:
+            cmd += ["--exclude", ex]
+        for d in exclude_dirs:
+            cmd += ["--exclude", f"/{d}/**"]
+        res = subprocess.run(cmd, text=True, capture_output=True)
+        if res.returncode == 3 and str(src).startswith(cfg["remote"]):
+            return True, "nothing on Drive yet"  # source dir not found on remote = first push
+        return res.returncode == 0, (res.stderr or res.stdout).strip()
+    src, dst = Path(os.path.expanduser(str(src))), Path(os.path.expanduser(str(dst)))
+    if not src.exists():
+        return True, "nothing to copy yet"
+    copied = 0
+    for f in src.rglob("*"):
+        if not f.is_file() or any(fnmatch.fnmatch(f.name, ex) for ex in MEMORY_SYNC_EXCLUDES):
+            continue
+        if f.relative_to(src).parts[0] in exclude_dirs:
+            continue
+        target = dst / f.relative_to(src)
+        if target.exists() and target.stat().st_mtime >= f.stat().st_mtime:
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(f, target)
+        copied += 1
+    return True, f"{copied} file(s) copied"
+
+
+def _transcript_cache(root, direction):
+    d = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "devmind" / "transcripts" \
+        / _project_key(root) / direction
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _redact_obj(obj):
+    if isinstance(obj, str):
+        return _redact(obj)
+    if isinstance(obj, list):
+        return [_redact_obj(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _redact_obj(v) for k, v in obj.items()}
+    return obj
+
+
+def _export_transcripts(root, cfg, state):
+    """Stage this machine's Claude transcripts (redacted + gzipped) for upload. Returns count staged."""
+    import gzip
+    src = _claude_sessions_dir(root)
+    if not src.is_dir():
+        return 0
+    out = _transcript_cache(root, "out")
+    exported = state.setdefault("exported", {})
+    imported = state.get("imported", {})
+    n = 0
+    for jl in sorted(src.glob("*.jsonl")):
+        sid, mtime = jl.stem, jl.stat().st_mtime
+        if imported.get(sid, {}).get("mtime") == mtime:
+            continue  # came from another machine, unchanged here
+        base = f"{cfg['machine']}__{sid}"
+        if exported.get(sid) == mtime and (out / f"{base}.jsonl.gz").exists():
+            continue
+        with open(jl, errors="ignore") as fh, gzip.open(out / f"{base}.jsonl.gz.tmp", "wt", encoding="utf-8") as gz:
+            for line in fh:
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                if d.get("type") in ("api-request", "api-request-blob", "api-request-shape"):
+                    continue  # raw API payloads: large and not needed for /resume
+                gz.write(json.dumps(_redact_obj(d), ensure_ascii=False, separators=(",", ":")) + "\n")
+        os.replace(out / f"{base}.jsonl.gz.tmp", out / f"{base}.jsonl.gz")
+        (out / f"{base}.meta.json").write_text(json.dumps(
+            {"session": sid, "machine": cfg["machine"], "root": str(root), "mtime": mtime}))
+        exported[sid] = mtime
+        n += 1
+    return n
+
+
+def _import_transcripts(root, cfg, state):
+    """Install other machines' transcripts into this machine's ~/.claude/projects/<slug>/ (for /resume)."""
+    import gzip
+    inbox = _transcript_cache(root, "in")
+    dest = _claude_sessions_dir(root)
+    imported = state.setdefault("imported", {})
+    n, skipped = 0, []
+    for meta_f in sorted(inbox.glob("*.meta.json")):
+        try:
+            meta = json.loads(meta_f.read_text())
+        except ValueError:
+            continue
+        sid, machine = meta.get("session"), meta.get("machine")
+        gz_f = meta_f.with_name(meta_f.name.replace(".meta.json", ".jsonl.gz"))
+        if not sid or machine == cfg["machine"] or not gz_f.exists():
+            continue
+        target = dest / f"{sid}.jsonl"
+        rec = imported.get(sid, {})
+        if rec.get("remote_mtime", 0) >= meta.get("mtime", 0) and target.exists():
+            continue  # already have this version
+        if target.exists():
+            local_mtime = target.stat().st_mtime
+            untouched_import = rec.get("mtime") == local_mtime
+            untouched_own = state.get("exported", {}).get(sid) == local_mtime  # ours, already pushed, unchanged
+            if not (untouched_import or untouched_own):
+                skipped.append(sid)  # changed here since last sync: keep ours (it gets pushed under our name)
+                continue
+        old_root = meta.get("root") or ""
+        rx = re.compile(re.escape(old_root) + r'(?=[/"\\]|$)') if old_root and old_root != str(root) else None
+        dest.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(".jsonl.tmp")
+        with gzip.open(gz_f, "rt", encoding="utf-8") as gz, open(tmp, "w", encoding="utf-8") as fh:
+            for line in gz:
+                fh.write(rx.sub(str(root).replace("\\", "\\\\"), line) if rx else line)
+        os.replace(tmp, target)
+        imported[sid] = {"from": machine, "remote_mtime": meta.get("mtime", 0), "mtime": target.stat().st_mtime}
+        n += 1
+    return n, skipped
+
+
+def _claude_memory_dir(root):
+    return _claude_sessions_dir(root) / "memory"
+
+
+def _merge_claude_memory(src_dir, dst_dir):
+    """Merge Claude auto-memory files from src_dir into dst_dir.
+    New files are copied; a newer file replaces an older one; MEMORY.md (the index both machines
+    append to) is merged line-by-line so no machine's entries are lost. Returns files changed."""
+    import shutil
+    src_dir, dst_dir = Path(src_dir), Path(dst_dir)
+    if not src_dir.is_dir():
+        return 0
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    changed = 0
+    for f in sorted(src_dir.glob("*.md")):
+        t = dst_dir / f.name
+        if not t.exists():
+            shutil.copy2(f, t)
+            changed += 1
+        elif f.name == CLAUDE_MEMORY_INDEX:
+            local = t.read_text(errors="ignore").splitlines()
+            have = {l.strip() for l in local if l.strip()}
+            extra = [l for l in f.read_text(errors="ignore").splitlines() if l.strip() and l.strip() not in have]
+            if extra:
+                t.write_text("\n".join(local + extra).rstrip("\n") + "\n")
+                changed += 1
+        elif f.stat().st_mtime > t.stat().st_mtime + 1 and f.read_bytes() != t.read_bytes():
+            shutil.copy2(f, t)
+            changed += 1
+    return changed
+
+
+def _pull_claude_memory(root, cfg, src):
+    inbox = _transcript_cache(root, "claude-memory-in")
+    ok, msg = _transfer(f"{src}/{CLAUDE_MEMORY_REMOTE_DIR}", inbox, cfg)
+    if not ok:
+        return False, msg, 0
+    return True, msg, _merge_claude_memory(inbox, _claude_memory_dir(root))
+
+
+def memory_push(root, quiet=False):
+    cfg = _memory_config()
+    if not _require_backend(cfg):
+        return False
+    memory_capture(root, quiet=True)
+    mem = _memory_dir(root)
+
+    # Safety net: block the upload if any memory file still contains a secret.
+    findings = []
+    cmem = _claude_memory_dir(root)
+    scan_files = [f for f in mem.rglob("*.md") if f.name != MEMORY_INDEX_FILE]
+    scan_files += sorted(cmem.glob("*.md")) if cmem.is_dir() else []
+    for f in scan_files:
+        label = str(f.relative_to(root)) if f.is_relative_to(root) else str(f).replace(str(Path.home()), "~")
+        for i, line in enumerate(f.read_text(errors="ignore").splitlines(), 1):
+            _scan_line(line, label, f"L{i}", findings, [])
+    if findings:
+        log_err(f"Memory push blocked: {len(findings)} secret(s) found in memory files:")
+        for x in findings[:20]:
+            print(f"   ✗ [{x['rule']}] {x['path']} ({x['where']})  {x['preview']}")
+        print("   Remove them from the file(s) above, then push again.")
+        return False
+
+    dest = f"{cfg['remote']}/{_project_key(root)}"
+    ok, msg = _transfer(mem, dest, cfg, exclude_dirs=(TRANSCRIPTS_DIR, CLAUDE_MEMORY_REMOTE_DIR))
+    state = _load_json(mem / MEMORY_STATE_FILE, {})
+    if ok and cmem.is_dir():
+        # merge the other machine's entries first, so the newer local MEMORY.md never drops them
+        okm, msgm, _ = _pull_claude_memory(root, cfg, dest)
+        if okm:
+            okm, msgm = _transfer(cmem, f"{dest}/{CLAUDE_MEMORY_REMOTE_DIR}", cfg)
+        ok = ok and okm
+        msg = f"{msg}; claude-memory: {msgm}" if okm else msgm
+    if ok and cfg.get("transcripts", True):
+        staged = _export_transcripts(root, cfg, state)
+        ok2, msg2 = _transfer(_transcript_cache(root, "out"), f"{dest}/{TRANSCRIPTS_DIR}", cfg)
+        ok = ok and ok2
+        msg = f"{msg}; transcripts: {staged} staged, {msg2}" if ok2 else msg2
+    if ok:
+        state["last_push"] = datetime.now().isoformat(timespec="seconds")
+        state.pop("last_error", None)
+    else:
+        state["last_error"] = msg[:500]
+    _save_json(mem / MEMORY_STATE_FILE, state)
+    _register_project(root)
+    if not ok:
+        log_err(f"Memory push → {dest} failed: {msg}")
+    elif not quiet:
+        log_ok(f"Memory push → {dest}: {msg or 'done'}")
+    return ok
+
+
+def memory_pull(root, quiet=False):
+    cfg = _memory_config()
+    if not _require_backend(cfg):
+        return False
+    mem = _memory_dir(root)
+    src = f"{cfg['remote']}/{_project_key(root)}"
+    ok, msg = _transfer(src, mem, cfg, exclude_dirs=(TRANSCRIPTS_DIR, CLAUDE_MEMORY_REMOTE_DIR))
+    state = _load_json(mem / MEMORY_STATE_FILE, {})
+    if ok:
+        okm, msgm, merged = _pull_claude_memory(root, cfg, src)
+        if okm:
+            msg = f"{msg}; {merged} Claude memory file(s) merged"
+        else:
+            ok, msg = False, msgm
+    if ok and cfg.get("transcripts", True):
+        ok2, msg2 = _transfer(f"{src}/{TRANSCRIPTS_DIR}", _transcript_cache(root, "in"), cfg)
+        if ok2:
+            installed, skipped = _import_transcripts(root, cfg, state)
+            msg = f"{msg}; {installed} Claude session(s) installed for /resume"
+            if skipped:
+                msg += f" ({len(skipped)} kept local: continued on this machine)"
+        else:
+            ok, msg = False, msg2
+        state.pop("last_error", None)
+    else:
+        state["last_error"] = msg[:500]
+    _save_json(mem / MEMORY_STATE_FILE, state)
+    n = memory_index(root)
+    _register_project(root)
+    if not ok:
+        log_err(f"Memory pull ← {src} failed: {msg}")
+    elif not quiet:
+        log_ok(f"Memory pull ← {src}: {msg or 'done'} ({n} sessions in index)")
+    return ok
+
+
+def memory_status(root):
+    import shutil
+    cfg = _memory_config()
+    mem = root / ".devmind" / "memory"
+    state = _load_json(mem / MEMORY_STATE_FILE, {})
+    sessions = list((mem / "sessions").glob("*.md")) if (mem / "sessions").is_dir() else []
+    return {
+        "configured": cfg["configured"],
+        "remote": cfg["remote"],
+        "backend": "rclone" if _is_rclone_remote(cfg["remote"]) else "folder",
+        "backend_ready": (not _is_rclone_remote(cfg["remote"])) or _rclone_remote_exists(cfg["remote"]),
+        "rclone": _rclone_bin(),
+        "machine": cfg["machine"],
+        "project_key": _project_key(root),
+        "sessions": len(sessions),
+        "last_push": state.get("last_push"),
+        "last_pull": state.get("last_pull"),
+        "last_error": state.get("last_error"),
+    }
+
+
+def cmd_memory(project_dir, args):
+    sub = args[0] if args else "status"
+    quiet = "--quiet" in args
+    root = _repo_root(project_dir)
+
+    if sub == "setup":
+        cfg = _load_json(MEMORY_CONFIG_FILE, {})
+        if "--remote" in args and args.index("--remote") + 1 < len(args):
+            cfg["remote"] = args[args.index("--remote") + 1]
+        if "--machine" in args and args.index("--machine") + 1 < len(args):
+            cfg["machine"] = args[args.index("--machine") + 1]
+        cfg.setdefault("remote", MEMORY_DEFAULT_REMOTE)
+        cfg.setdefault("machine", _memory_config()["machine"])
+        _save_json(MEMORY_CONFIG_FILE, cfg)
+        log_ok(f"Memory sync configured: remote={cfg['remote']} machine={cfg['machine']} ({MEMORY_CONFIG_FILE})")
+        _require_backend(_memory_config())
+        return
+    if sub == "connect":
+        machine = args[args.index("--machine") + 1] if "--machine" in args and args.index("--machine") + 1 < len(args) else None
+        try:
+            memory_connect(machine=machine, open_browser="--no-browser" not in args)
+        except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+            log_err(f"Google Drive connection failed: {e}")
+            sys.exit(1)
+        except KeyboardInterrupt:
+            log_err("Cancelled.")
+            sys.exit(130)
+        return
+    if sub == "disconnect":
+        memory_disconnect()
+        return
+    if sub == "capture":
+        memory_capture(root, quiet)
+    elif sub == "index":
+        log_ok(f"chat-history.md rebuilt ({memory_index(root)} sessions)")
+    elif sub == "push":
+        sys.exit(0 if memory_push(root, quiet) else 1)
+    elif sub == "pull":
+        sys.exit(0 if memory_pull(root, quiet) else 1)
+    elif sub == "sync":
+        ok = memory_pull(root, quiet) and memory_push(root, quiet)
+        sys.exit(0 if ok else 1)
+    elif sub == "sync-all":
+        projects = [Path(p) for p in _load_json(MEMORY_PROJECTS_FILE, []) if Path(p).is_dir()]
+        if root not in projects and (root / ".git").exists():
+            projects.append(root)
+        failed = 0
+        for p in projects:
+            print(f"{BOLD}── {p}{NC}")
+            if not (memory_pull(p, quiet) and memory_push(p, quiet)):
+                failed += 1
+        if failed:
+            log_err(f"{failed}/{len(projects)} project(s) failed to sync")
+        else:
+            log_ok(f"Synced {len(projects)}/{len(projects)} project(s)")
+        sys.exit(1 if failed else 0)
+    elif sub == "status":
+        st = memory_status(root)
+        if "--json" in args:
+            print(json.dumps(st))
+            return
+        for k, v in st.items():
+            print(f"  {CYAN}{k:<14}{NC} {v}")
+    else:
+        log_err(f"Unknown memory command: {sub}")
+        print("Usage: devmind memory connect [--machine office-pc] [--no-browser]   (one-step Google Drive login)\n"
+              "       devmind memory disconnect | setup [--remote <rclone-remote:folder | /folder>] [--machine X]\n"
+              "       devmind memory capture | index | push | pull | sync | sync-all | status [--json]"
+              "  (add --quiet for hooks)")
+        sys.exit(2)
+
+
 def print_help():
     print(f"""{BOLD}DevMind CLI v3.0.0 — Enterprise AI Operating System{NC}
 
@@ -1475,6 +2358,7 @@ Commands:
   {CYAN}blame <file>{NC}     Git intelligence & historical change rationale
   {CYAN}audit security{NC}   Run security scanner (secrets, OWASP, SQLi/XSS)
   {CYAN}scan [mode]{NC}      Secret Guard: --staged (default) | --pre-push | --range A..B | --all
+  {CYAN}memory <sub>{NC}     AI memory ⇄ Google Drive: connect | disconnect | setup | capture | push | pull | sync | sync-all | status
   {CYAN}db analyze{NC}       Analyze database architecture, foreign keys & indexes
   {CYAN}review{NC}           AI Code Review Bot inspecting uncommitted git diff
   {CYAN}adr create <t>{NC}  Create Architecture Decision Record (docs/adr/)
@@ -1522,6 +2406,8 @@ def main():
         cmd_security(project_dir)
     elif cmd == "scan":
         cmd_scan(project_dir, sys.argv[2:])
+    elif cmd == "memory":
+        cmd_memory(project_dir, sys.argv[2:])
     elif cmd == "db" and len(sys.argv) > 2 and sys.argv[2] == "analyze":
         cmd_db_analyze(project_dir)
     elif cmd == "review":
@@ -1538,6 +2424,7 @@ def main():
     else:
         log_err(f"Unknown command: {' '.join(sys.argv[1:])}")
         print_help()
+        sys.exit(2)
 
 if __name__ == "__main__":
     main()

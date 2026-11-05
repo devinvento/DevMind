@@ -42,6 +42,51 @@
     },
     "commands": [
       {
+        "command": "devmind.memoryConnectDrive",
+        "title": "DevMind: Connect Google Drive (AI Memory)",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "devmind.memoryDisconnectDrive",
+        "title": "DevMind: Disconnect Google Drive",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "devmind.memoryPush",
+        "title": "DevMind: Push AI Memory to Google Drive",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "devmind.memoryPull",
+        "title": "DevMind: Pull AI Memory from Google Drive",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "devmind.memorySyncAll",
+        "title": "DevMind: Sync AI Memory for All Projects",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "devmind.memorySetup",
+        "title": "DevMind: Set Up AI Memory Sync (Google Drive)",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "devmind.memoryOpenHistory",
+        "title": "DevMind: Open AI Chat History",
+        "icon": "$(history)"
+      },
+      {
+        "command": "devmind.memoryMenu",
+        "title": "DevMind: AI Memory Sync Menu",
+        "icon": "$(cloud)"
+      },
+      {
+        "command": "devmind.installSkills",
+        "title": "DevMind: Install AI Skills (.agents & .claude)",
+        "icon": "$(shield)"
+      },
+      {
         "command": "devmind.doctor",
         "title": "DevMind: Run Doctor Diagnostics",
         "icon": "$(pulse)"
@@ -234,6 +279,16 @@
           "command": "devmind.sync",
           "when": "view == devmind.sidebarView",
           "group": "navigation"
+        },
+        {
+          "command": "devmind.memoryPush",
+          "when": "view == devmind.sidebarView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "devmind.memoryPull",
+          "when": "view == devmind.sidebarView",
+          "group": "navigation@2"
         }
       ]
     },
@@ -244,6 +299,22 @@
           "type": "string",
           "default": "devmind",
           "description": "Path to the DevMind CLI executable (defaults to 'devmind' or fallback 'python3 bin/devmind')."
+        },
+        "devmind.memory.autoPullOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pull AI memory (chat history, decisions) from Google Drive when VS Code opens a project."
+        },
+        "devmind.memory.autoPushMinutes": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "description": "Automatically push AI memory to Google Drive every N minutes (0 = off)."
+        },
+        "devmind.memory.pushOnClose": {
+          "type": "boolean",
+          "default": true,
+          "description": "Push AI memory to Google Drive when the VS Code window closes."
         }
       }
     }

@@ -52,3 +52,7 @@ This document records the chronological history of feature additions, refactorin
 ### [2026-08-12] Planned Feature: FEATURE [14fd4a0]: feat: introduce stack-based project profiles and automate background synchronization in setup script
 - **Goal**: FEATURE [14fd4a0]: feat: introduce stack-based project profiles and automate background synchronization in setup script
 - **Status**: Planned
+
+### [2026-11-05] Planned Feature: FEATURE [6e54fba]: feat: add automated secret guard scanner and frappe framework detection logic
+- **Goal**: FEATURE [6e54fba]: feat: add automated secret guard scanner and frappe framework detection logic
+- **Status**: Planned
