@@ -11,9 +11,14 @@ skills:
   - database-migrations
 agents:
   - architect
-  - backend-developer
-  - database-expert
+  - php-reviewer
+  - database-reviewer
+  - security-reviewer
+# rules: a folder name (php) links every file in ECC rules/<folder>/;
+# folder/file (common/testing) links one file
 rules:
-  - api
-  - testing
-  - project-specific
+  - common/coding-style
+  - common/security
+  - common/testing
+  - common/git-workflow
+  - php

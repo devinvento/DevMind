@@ -1,5 +1,6 @@
 name: frappe
 skills:
+  - frappe-app-dev
   - python-testing
   - python-patterns
   - git-workflow
@@ -9,12 +10,16 @@ skills:
   - mysql-patterns
   - postgres-patterns
   - database-migrations
+  - code-style
+  - quality-code-review
 agents:
   - architect
-  - backend-developer
-  - doctype-expert
-  - database-expert
+  - python-reviewer
+  - database-reviewer
+  - security-reviewer
 rules:
-  - api
-  - testing
-  - project-specific
+  - common/coding-style
+  - common/security
+  - common/testing
+  - common/git-workflow
+  - python

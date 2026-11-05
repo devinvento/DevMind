@@ -6,8 +6,10 @@ skills:
   - security-review
 agents:
   - architect
-  - backend-developer
+  - code-reviewer
+  - security-reviewer
 rules:
-  - api
-  - testing
-  - project-specific
+  - common/coding-style
+  - common/security
+  - common/testing
+  - common/git-workflow

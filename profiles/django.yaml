@@ -11,9 +11,12 @@ skills:
   - database-migrations
 agents:
   - architect
-  - backend-developer
-  - database-expert
+  - django-reviewer
+  - python-reviewer
+  - database-reviewer
 rules:
-  - api
-  - testing
-  - project-specific
+  - common/coding-style
+  - common/security
+  - common/testing
+  - common/git-workflow
+  - python

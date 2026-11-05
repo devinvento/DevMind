@@ -10,8 +10,12 @@ skills:
   - ui-design
 agents:
   - architect
-  - frontend-developer
+  - react-reviewer
+  - typescript-reviewer
 rules:
-  - api
-  - testing
-  - project-specific
+  - common/coding-style
+  - common/security
+  - common/testing
+  - common/git-workflow
+  - typescript
+  - react

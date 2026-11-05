@@ -64,9 +64,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 PROJECT_DIR="${PROJECT_ARG:-$(pwd)}"
+# Absolutize now: every path below is derived from PROJECT_DIR, and later steps cd around
+if [[ -d "$PROJECT_DIR" ]]; then
+    PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
+fi
 
 ECC_REPO_URL="${ECC_REPO_URL:-https://github.com/affaan-m/everything-claude-code.git}"
 ECC_DIR="${ECC_DIR:-$HOME/.local/share/everything-claude-code}"
+
+FRAPPE_SKILLS_DIR="${FRAPPE_SKILLS_DIR:-$HOME/.local/share/frappe-skills}"
+# Skill lookup order: ECC first, then the Frappe skills checkout
+SKILL_SOURCE_DIRS=("$ECC_DIR/skills" "$FRAPPE_SKILLS_DIR/skills")
 
 ANTIGRAVITY_MCP_CONFIG="${HOME}/.gemini/config/mcp_config.json"
 
@@ -75,6 +83,7 @@ SKILLS_DIR="${AGENTS_DIR}/skills"
 RULES_DIR="${AGENTS_DIR}/rules"
 WORKFLOWS_DIR="${AGENTS_DIR}/workflows"
 AGENTS_AGENTS_DIR="${AGENTS_DIR}/agents"
+CLAUDE_DIR="${PROJECT_DIR}/.claude"
 DEVMIND_MEMORY_DIR="${PROJECT_DIR}/.devmind/memory"
 ADR_DIR="${PROJECT_DIR}/docs/adr"
 
@@ -82,6 +91,7 @@ GRAPHIFY_OUTPUT_DIR="${PROJECT_DIR}/graphify-out"
 
 # State Variables
 PROJECT_TYPE="Generic / Unspecified"
+PROFILE_NAME="generic"
 TECH_STACK=""
 TEST_FRAMEWORK="None detected"
 DB_ENGINE="None detected"
@@ -342,7 +352,7 @@ install_ecc_repository() {
 
     # Auto-integrate Frappe skills repository
     local frappe_skills_url="${FRAPPE_SKILLS_URL:-https://github.com/frappe/skills.git}"
-    local frappe_skills_temp_dir="$HOME/.local/share/frappe-skills"
+    local frappe_skills_temp_dir="$FRAPPE_SKILLS_DIR"
     if [[ -d "$frappe_skills_temp_dir/.git" ]]; then
         if [[ "$UPDATE_ECC" == "true" ]]; then
             log "Updating Frappe skills repository..."
@@ -355,9 +365,6 @@ install_ecc_repository() {
         git clone --depth 1 "$frappe_skills_url" "$frappe_skills_temp_dir" --quiet
     fi
 
-    if [[ -d "$frappe_skills_temp_dir/skills" ]]; then
-        cp -r "$frappe_skills_temp_dir/skills"/* "$ECC_DIR/skills/"
-    fi
 }
 
 ###############################################################################
@@ -382,7 +389,7 @@ detect_project_stack() {
     fi
 
     # Python & Frappe ecosystems
-    if [[ -f "$PROJECT_DIR/apps.txt" ]] || [[ -d "$PROJECT_DIR/sites" ]] || find "$PROJECT_DIR" -maxdepth 4 -name "hooks.py" -print -quit | grep -q .; then
+    if [[ -f "$PROJECT_DIR/apps.txt" ]] || [[ -d "$PROJECT_DIR/sites" ]] || find "$PROJECT_DIR" -maxdepth 4 \( -name node_modules -o -name .git -o -name venv -o -name .venv -o -name site-packages \) -prune -o -name hooks.py -execdir test -f modules.txt \; -print -quit | grep -q .; then
         PROJECT_TYPE="Python / Frappe Framework"
         stacks+=("Python" "Frappe" "ERPNext")
     elif [[ -f "$PROJECT_DIR/manage.py" ]]; then
@@ -1523,6 +1530,103 @@ EOF
     fi
 }
 
+# Installs the DevMind Secret Guard as a git pre-push hook. It runs `devmind scan --pre-push`
+# and blocks the push (non-zero exit) when secrets, .env files, DB dumps or AI chat history
+# are found in the commits being pushed. Works for humans and AI agents alike.
+setup_pre_push_hook() {
+    log "Configuring DevMind Secret Guard (git pre-push hook)..."
+    local git_dir="$PROJECT_DIR/.git"
+    if [[ ! -d "$git_dir" ]]; then
+        warn "No .git directory found at target path. Skipping Secret Guard hook."
+        return 0
+    fi
+    mkdir -p "$git_dir/hooks"
+    local hook_file="$git_dir/hooks/pre-push"
+
+    local hook_result
+    hook_result=$(HOOK_FILE="$hook_file" python3 << 'EOF'
+import os, re
+
+hook_file = os.environ['HOOK_FILE']
+hook_code = r'''# >>> DEVMIND SECRET GUARD START >>>
+# DevMind Secret Guard: blocks pushes that contain secrets / .env / DB dumps / AI chat history.
+# Bypass for a single push (humans only, after checking): DEVMIND_SKIP_SECRET_SCAN=1 git push
+# (POSIX sh on purpose: this block may be inserted into an existing #!/bin/sh hook.)
+DEVMIND_PUSH_REFS="$(cat)"
+DEVMIND_SCAN_CMD=""
+if [ -f "./bin/devmind" ]; then
+    DEVMIND_SCAN_CMD="python3 ./bin/devmind"
+elif command -v devmind >/dev/null 2>&1; then
+    DEVMIND_SCAN_CMD="devmind"
+elif [ -f "$HOME/.local/bin/devmind" ]; then
+    DEVMIND_SCAN_CMD="python3 $HOME/.local/bin/devmind"
+fi
+if [ -n "$DEVMIND_SCAN_CMD" ]; then
+    if ! printf '%s\n' "$DEVMIND_PUSH_REFS" | $DEVMIND_SCAN_CMD scan --pre-push; then
+        printf '\033[1;31m[DevMind Secret Guard]\033[0m Push blocked. Fix the items above and push again.\n' >&2
+        exit 1
+    fi
+else
+    printf '\033[1;33m[DevMind Secret Guard]\033[0m devmind CLI not found, secret scan SKIPPED. Run setup-ai-project.sh to install it.\n' >&2
+fi
+# Restore stdin for any hook code that follows this block.
+exec 0<<DEVMIND_REFS_EOF
+$DEVMIND_PUSH_REFS
+DEVMIND_REFS_EOF
+# <<< DEVMIND SECRET GUARD END <<<'''
+
+start, end = '# >>> DEVMIND SECRET GUARD START >>>', '# <<< DEVMIND SECRET GUARD END <<<'
+if not os.path.exists(hook_file):
+    with open(hook_file, 'w') as f:
+        f.write('#!/usr/bin/env bash\n' + hook_code + '\n')
+    print('CREATED')
+else:
+    content = open(hook_file).read()
+    if start in content and end in content:
+        content = re.sub(rf'{re.escape(start)}.*?{re.escape(end)}', lambda _: hook_code, content, flags=re.DOTALL)
+        print('UPDATED')
+    else:
+        # Insert right after the shebang so our block reads the ref list from stdin first.
+        lines = content.splitlines(keepends=True)
+        if lines and lines[0].startswith('#!'):
+            content = lines[0] + hook_code + '\n' + ''.join(lines[1:])
+        else:
+            content = '#!/usr/bin/env bash\n' + hook_code + '\n' + content
+        print('PREPENDED')
+    with open(hook_file, 'w') as f:
+        f.write(content)
+EOF
+)
+    chmod +x "$hook_file"
+    case "$hook_result" in
+        CREATED)   success "Created DevMind Secret Guard pre-push hook: $hook_file" ;;
+        UPDATED)   success "Updated DevMind Secret Guard pre-push hook: $hook_file" ;;
+        *)         success "Added DevMind Secret Guard to existing pre-push hook: $hook_file" ;;
+    esac
+}
+
+# Links DevMind's own first-party skills (skills/ in the DevMind source repo) into the project.
+map_devmind_skills() {
+    local src_dir="$SCRIPT_SOURCE_DIR/skills"
+    [[ -d "$src_dir" ]] || return 0
+    mkdir -p "$SKILLS_DIR"
+    local skill_dir name target mapped=0
+    for skill_dir in "$src_dir"/*/; do
+        [[ -f "$skill_dir/SKILL.md" ]] || continue
+        name="$(basename "$skill_dir")"
+        target="$SKILLS_DIR/$name"
+        if [[ -L "$target" ]]; then
+            rm -f "$target"
+        elif [[ -e "$target" ]]; then
+            warn "Local custom skill '$name' already exists. Preserving it."
+            continue
+        fi
+        ln -s "${skill_dir%/}" "$target"
+        mapped=$((mapped + 1))
+    done
+    success "Mapped $mapped DevMind skills (secret-guard, ...)"
+}
+
 ###############################################################################
 # 5. Specialized AI Agents Generator (.agents/agents/)
 ###############################################################################
@@ -1868,100 +1972,129 @@ EOF
 
 get_profile_items() {
     local key="$1"
-    local profile_file="${PROJECT_DIR}/profiles/${PROFILE_NAME}.yaml"
-    if [[ ! -f "$profile_file" ]]; then
-        profile_file="$(dirname "$0")/profiles/${PROFILE_NAME}.yaml"
+    local profile_file=""
+    local candidate
+    # A project-local profiles/<name>.yaml overrides the one shipped with DevMind
+    for candidate in \
+        "${PROJECT_DIR}/profiles/${PROFILE_NAME}.yaml" \
+        "${SCRIPT_SOURCE_DIR}/profiles/${PROFILE_NAME}.yaml" \
+        "${SCRIPT_SOURCE_DIR}/profiles/generic.yaml"; do
+        if [[ -f "$candidate" ]]; then
+            profile_file="$candidate"
+            break
+        fi
+    done
+    if [[ -z "$profile_file" ]]; then
+        warn "No profile file found for '$PROFILE_NAME' (looked in $PROJECT_DIR/profiles and $SCRIPT_SOURCE_DIR/profiles)"
+        return 0
     fi
-    if [[ ! -f "$profile_file" ]]; then
-        profile_file="$(dirname "$0")/profiles/generic.yaml"
-    fi
-    
-    python3 -c "
-import re, sys
+
+    python3 - "$profile_file" "$key" <<'PY'
+import sys
+profile_file, wanted = sys.argv[1], sys.argv[2]
 profile = {'skills': [], 'agents': [], 'rules': []}
 current_key = None
-try:
-    with open('${profile_file}', 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
-            if line.startswith('-'):
-                val = line[1:].strip().strip('\"').strip(\"'\")
-                if current_key and current_key in profile:
-                    profile[current_key].append(val)
-            elif ':' in line:
-                k, v = line.split(':', 1)
-                k = k.strip()
-                if k in ['skills', 'agents', 'rules']:
-                    current_key = k
-                else:
-                    current_key = None
-except Exception:
-    pass
-for item in profile['${key}']:
+with open(profile_file, 'r', encoding='utf-8') as f:
+    for line in f:
+        line = line.split('#', 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith('-'):
+            val = line[1:].strip().strip('"').strip("'")
+            if current_key and val:
+                profile[current_key].append(val)
+        elif ':' in line:
+            k = line.split(':', 1)[0].strip()
+            current_key = k if k in profile else None
+for item in profile[wanted]:
     print(item)
-" 2>/dev/null
+PY
+}
+
+# Remove symlinks in $1 that point into the ECC / Frappe skill checkouts, so assets
+# from a previous profile (or an older DevMind that linked everything) don't linger.
+# Links pointing anywhere else are user-owned and preserved.
+prune_managed_links() {
+    local dir="$1"
+    [[ -d "$dir" ]] || return 0
+    local link link_target
+    while IFS= read -r -d '' link; do
+        link_target="$(readlink "$link")"
+        if [[ "$link_target" == "$ECC_DIR/"* || "$link_target" == "$FRAPPE_SKILLS_DIR/"* ]]; then
+            rm -f "$link"
+        fi
+    done < <(find "$dir" -mindepth 1 -maxdepth 1 -type l -print0)
+}
+
+resolve_skill_dir() {
+    local skill_name="$1" src
+    for src in "${SKILL_SOURCE_DIRS[@]}"; do
+        if [[ -d "$src/$skill_name" ]]; then
+            echo "$src/$skill_name"
+            return 0
+        fi
+    done
+    return 1
 }
 
 map_ecc_skills() {
     mkdir -p "$SKILLS_DIR"
     log "Mapping ECC skills for profile '$PROFILE_NAME'..."
+    prune_managed_links "$SKILLS_DIR"
 
-    get_profile_items skills | while read -r skill_name; do
-        if [[ -z "$skill_name" ]]; then
-            continue
-        fi
-        local skill_dir="$ECC_DIR/skills/$skill_name"
-        if [[ ! -d "$skill_dir" ]]; then
+    local skill_name skill_dir target mapped=0
+    while read -r skill_name; do
+        [[ -z "$skill_name" ]] && continue
+        if ! skill_dir="$(resolve_skill_dir "$skill_name")"; then
+            warn "Profile '$PROFILE_NAME' skill '$skill_name' not found in ECC or Frappe skills. Skipping."
             continue
         fi
         target="$SKILLS_DIR/$skill_name"
         if [[ -e "$target" || -L "$target" ]]; then
-            if [[ -L "$target" ]]; then
-                local link_target
-                link_target=$(readlink "$target")
-                if [[ "$link_target" == "$skill_dir" ]]; then
-                    rm -f "$target"
-                else
-                    warn "Local custom skill symlink '$skill_name' points to '$link_target'. Preserving it."
-                    continue
-                fi
-            else
-                warn "Local custom skill directory '$skill_name' already exists. Preserving it."
-                continue
-            fi
+            warn "Local custom skill '$skill_name' already exists. Preserving it."
+            continue
         fi
         ln -s "$skill_dir" "$target"
-    done
+        mapped=$((mapped + 1))
+    done < <(get_profile_items skills)
 
-    success "Mapped ECC Skills for profile '$PROFILE_NAME'"
+    success "Mapped $mapped ECC skills for profile '$PROFILE_NAME'"
 }
 
+# Profile rule entries may be:
+#   common/testing  -> $ECC_DIR/rules/common/testing.md
+#   php             -> every .md in $ECC_DIR/rules/php/
+#   some-rule       -> $ECC_DIR/rules/some-rule.md (flat layout)
 map_ecc_rules() {
     mkdir -p "$RULES_DIR"
     log "Mapping ECC rules for profile '$PROFILE_NAME'..."
+    prune_managed_links "$RULES_DIR"
 
-    get_profile_items rules | while read -r rule_name; do
-        if [[ -z "$rule_name" ]]; then
+    local rule_name rule_file target mapped=0
+    local -a rule_files
+    while read -r rule_name; do
+        [[ -z "$rule_name" ]] && continue
+        rule_files=()
+        if [[ -d "$ECC_DIR/rules/$rule_name" ]]; then
+            while IFS= read -r -d '' rule_file; do
+                rule_files+=("$rule_file")
+            done < <(find "$ECC_DIR/rules/$rule_name" -maxdepth 1 -type f -name '*.md' -print0 | sort -z)
+        elif [[ -f "$ECC_DIR/rules/$rule_name.md" ]]; then
+            rule_files+=("$ECC_DIR/rules/$rule_name.md")
+        else
+            warn "Profile '$PROFILE_NAME' rule '$rule_name' not found in $ECC_DIR/rules. Skipping."
             continue
         fi
-        local rule_file="$ECC_DIR/rules/$rule_name.md"
-        if [[ ! -f "$rule_file" ]]; then
-            rule_file=$(find "$ECC_DIR/rules" -maxdepth 1 -type f -name "$rule_name*" -print -quit)
-        fi
-        if [[ -z "$rule_file" || ! -f "$rule_file" ]]; then
-            continue
-        fi
-        
-        local target_name
-        target_name="$(basename "$rule_file")"
-        target="$RULES_DIR/ecc-$target_name"
-        [[ -e "$target" || -L "$target" ]] && rm -f "$target"
-        ln -s "$rule_file" "$target"
-    done
+        for rule_file in "${rule_files[@]}"; do
+            # common/testing.md -> ecc-common-testing.md (avoids common/php name clashes)
+            target="$RULES_DIR/ecc-$(echo "${rule_file#"$ECC_DIR/rules/"}" | tr '/' '-')"
+            [[ -e "$target" || -L "$target" ]] && rm -f "$target"
+            ln -s "$rule_file" "$target"
+            mapped=$((mapped + 1))
+        done
+    done < <(get_profile_items rules)
 
-    success "Mapped ECC Rules for profile '$PROFILE_NAME'"
+    success "Mapped $mapped ECC rules for profile '$PROFILE_NAME'"
 }
 
 map_ecc_agents() {
@@ -1970,29 +2103,157 @@ map_ecc_agents() {
         return
     fi
     log "Mapping ECC agents for profile '$PROFILE_NAME'..."
+    prune_managed_links "$AGENTS_AGENTS_DIR"
 
-    get_profile_items agents | while read -r agent_name; do
-        if [[ -z "$agent_name" ]]; then
-            continue
-        fi
-        local agent_file="$ECC_DIR/agents/$agent_name.md"
+    local agent_name agent_file target mapped=0
+    while read -r agent_name; do
+        [[ -z "$agent_name" ]] && continue
+        agent_file="$ECC_DIR/agents/$agent_name.md"
         if [[ ! -f "$agent_file" ]]; then
-            agent_file=$(find "$ECC_DIR/agents" -maxdepth 1 -type f -name "$agent_name*" -print -quit)
-        fi
-        if [[ -z "$agent_file" || ! -f "$agent_file" ]]; then
+            warn "Profile '$PROFILE_NAME' agent '$agent_name' not found in $ECC_DIR/agents. Skipping."
             continue
         fi
-        
-        local target_name
-        target_name="$(basename "$agent_file")"
-        target="$AGENTS_AGENTS_DIR/ecc-$target_name"
+        target="$AGENTS_AGENTS_DIR/ecc-$agent_name.md"
         [[ -e "$target" || -L "$target" ]] && rm -f "$target"
         ln -s "$agent_file" "$target"
-    done
+        mapped=$((mapped + 1))
+    done < <(get_profile_items agents)
 
-    success "Mapped ECC Agents for profile '$PROFILE_NAME'"
+    success "Mapped $mapped ECC agents for profile '$PROFILE_NAME'"
 }
 
+###############################################################################
+# 8b. Claude Code Integration (CLAUDE.md, .claude/skills|agents|rules, .mcp.json)
+#
+# Claude Code does not read .agents/. It discovers:
+#   - project memory from CLAUDE.md (and .claude/rules/*.md)
+#   - skills from .claude/skills/<name>/SKILL.md
+#   - subagents from .claude/agents/*.md (YAML frontmatter with name + description)
+#   - project MCP servers from .mcp.json
+###############################################################################
+
+CLAUDE_MD_BEGIN="<!-- devmind:begin -->"
+CLAUDE_MD_END="<!-- devmind:end -->"
+
+# Mirror every entry of $1 into $2 as a symlink to the same place, after pruning
+# links in $2 that DevMind manages (into ECC/Frappe, or back into .agents/).
+mirror_into_claude() {
+    local src_dir="$1" dest_dir="$2"
+    mkdir -p "$dest_dir"
+    prune_managed_links "$dest_dir"
+    local link
+    while IFS= read -r -d '' link; do
+        [[ "$(readlink "$link")" == "$AGENTS_DIR/"* ]] && rm -f "$link"
+    done < <(find "$dest_dir" -mindepth 1 -maxdepth 1 -type l -print0)
+
+    [[ -d "$src_dir" ]] || return 0
+    local entry name target resolved
+    while IFS= read -r -d '' entry; do
+        name="$(basename "$entry")"
+        target="$dest_dir/$name"
+        if [[ -e "$target" && ! -L "$target" ]]; then
+            continue  # user-owned file/dir in .claude/ wins
+        fi
+        resolved="$entry"
+        [[ -L "$entry" ]] && resolved="$(readlink "$entry")"
+        rm -f "$target"
+        ln -s "$resolved" "$target"
+    done < <(find "$src_dir" -mindepth 1 -maxdepth 1 -print0)
+}
+
+# DevMind-generated personas are plain markdown; Claude Code subagents need
+# frontmatter. Write a Claude-format copy for each generated persona, then link
+# ECC agents whose name is not already taken by a project persona.
+sync_claude_agents() {
+    local dest="$CLAUDE_DIR/agents"
+    mkdir -p "$dest"
+    prune_managed_links "$dest"
+
+    python3 - "$AGENTS_AGENTS_DIR" "$dest" <<'PY'
+import re, sys
+from pathlib import Path
+
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+MARK = "<!-- generated by devmind -->"
+
+# Drop previously generated copies so removed personas don't linger
+for f in dest.glob("*.md"):
+    if f.is_file() and not f.is_symlink() and MARK in f.read_text(encoding="utf-8", errors="ignore"):
+        f.unlink()
+
+if src.is_dir():
+    for f in sorted(src.glob("*.md")):
+        if f.is_symlink():
+            continue  # ECC agents are linked separately below
+        text = f.read_text(encoding="utf-8", errors="ignore")
+        out = dest / f.name
+        if out.exists() or out.is_symlink():
+            continue  # user-owned agent wins
+        if text.startswith("---"):
+            out.write_text(text, encoding="utf-8")
+            continue
+        title = re.search(r"^#\s*Role:\s*(.+)$", text, re.M)
+        objective = re.search(r"\*\*Objective\*\*:\s*(.+)$", text, re.M)
+        desc = (objective.group(1) if objective else (title.group(1) if title else f.stem)).strip()
+        desc = desc.replace('"', "'")
+        out.write_text(
+            f'---\nname: {f.stem}\ndescription: "{desc}"\n---\n{MARK}\n\n{text}',
+            encoding="utf-8",
+        )
+PY
+
+    local link agent_file name
+    while IFS= read -r -d '' link; do
+        agent_file="$(readlink "$link")"
+        name="$(basename "$agent_file")"
+        [[ -e "$dest/$name" || -L "$dest/$name" ]] && continue
+        ln -s "$agent_file" "$dest/$name"
+    done < <(find "$AGENTS_AGENTS_DIR" -mindepth 1 -maxdepth 1 -type l -name 'ecc-*.md' -print0 2>/dev/null)
+}
+
+write_claude_md() {
+    local claude_md="$PROJECT_DIR/CLAUDE.md"
+    local block
+    block="$(cat <<EOF
+$CLAUDE_MD_BEGIN
+## DevMind Project Context (auto-generated — edit outside this block)
+
+@.agents/AGENTS.md
+
+- Stack profile: \`$PROFILE_NAME\` ($PROJECT_TYPE)
+- Architecture: @ARCHITECTURE.md
+- Database: @DATABASE.md
+- Security: @SECURITY.md
+- Project memory: \`.devmind/memory/\` · ADRs: \`docs/adr/\`
+- Knowledge graph: \`graphify-out/graph.json\` (report: \`graphify-out/GRAPH_REPORT.md\`). Prefer the \`graphify\` MCP tools for dependency questions; run \`graphify update .\` after structural changes.
+$CLAUDE_MD_END
+EOF
+)"
+
+    CLAUDE_MD="$claude_md" BLOCK="$block" BEGIN="$CLAUDE_MD_BEGIN" END="$CLAUDE_MD_END" python3 - <<'PY'
+import os, re
+path, block = os.environ["CLAUDE_MD"], os.environ["BLOCK"]
+begin, end = os.environ["BEGIN"], os.environ["END"]
+text = open(path, encoding="utf-8").read() if os.path.exists(path) else "# CLAUDE.md\n"
+pattern = re.compile(re.escape(begin) + r".*?" + re.escape(end), re.S)
+if pattern.search(text):
+    text = pattern.sub(lambda _: block, text)
+else:
+    text = text.rstrip("\n") + "\n\n" + block + "\n"
+open(path, "w", encoding="utf-8").write(text)
+PY
+}
+
+configure_claude_code() {
+    log "Configuring Claude Code integration (CLAUDE.md, .claude/, .mcp.json)..."
+
+    mirror_into_claude "$SKILLS_DIR" "$CLAUDE_DIR/skills"
+    mirror_into_claude "$RULES_DIR" "$CLAUDE_DIR/rules"
+    sync_claude_agents
+    write_claude_md
+
+    success "Claude Code: $(find "$CLAUDE_DIR/skills" -mindepth 1 -maxdepth 1 | wc -l) skills, $(find "$CLAUDE_DIR/agents" -mindepth 1 -maxdepth 1 | wc -l) agents, $(find "$CLAUDE_DIR/rules" -mindepth 1 -maxdepth 1 | wc -l) rules linked; CLAUDE.md updated"
+}
 
 ###############################################################################
 # 9. Create Master AGENTS.md Operating Manual
@@ -2059,6 +2320,10 @@ EOF
 
 build_graphify_graph() {
     cd "$PROJECT_DIR"
+    if [[ "${DEVMIND_SKIP_GRAPH:-}" == "1" ]]; then
+        log "Skipping Graphify rebuild (DEVMIND_SKIP_GRAPH=1, graph managed by devmind sync)"
+        return
+    fi
     log "Building Graphify knowledge graph..."
 
     if [[ -f "$GRAPHIFY_OUTPUT_DIR/graph.json" ]]; then
@@ -2086,9 +2351,18 @@ build_graphify_graph() {
                 warn "Graphify CLI returned an error. Run manually: graphify update ."
             fi
         fi
+        # GRAPH_REPORT.md is what Claude's graphify skill reads first; cluster-only builds it without an LLM
+        if [[ -f "$GRAPHIFY_OUTPUT_DIR/graph.json" && ! -f "$GRAPHIFY_OUTPUT_DIR/GRAPH_REPORT.md" ]]; then
+            graphify cluster-only . --no-label --no-viz >/dev/null 2>&1 \
+                && success "Generated graphify-out/GRAPH_REPORT.md" \
+                || warn "Could not generate GRAPH_REPORT.md. Run manually: graphify cluster-only ."
+        fi
         log "Generating interactive HTML graph visualizer (graphify-out/graph.html)..."
-        if python3 "$PROJECT_DIR/generate_graph_html.py" "$PROJECT_DIR" >/dev/null 2>&1; then
+        local html_out
+        if html_out=$(python3 "$PROJECT_DIR/generate_graph_html.py" "$PROJECT_DIR" 2>&1); then
             success "Generated HTML visualizer: graphify-out/graph.html"
+        else
+            warn "HTML visualizer failed: $(echo "$html_out" | tail -n 1)"
         fi
     else
         warn "Graphify CLI unavailable."
@@ -2207,6 +2481,9 @@ configure_graphify_mcp() {
         fi
     fi
 
+    # Claude Code (CLI + VS Code extension): project-scoped servers live in .mcp.json
+    absolute_configs+=("${PROJECT_DIR}/.mcp.json")
+
     local configured_any=false
 
     # Helper function to inject Graphify configuration into an MCP settings file
@@ -2324,6 +2601,12 @@ Generated: $(date)
 - Mapped Rules: $(find "$RULES_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
 - Mapped Agents: $(find "$AGENTS_AGENTS_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
 - Mapped Workflows: $(find "$WORKFLOWS_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
+
+## Claude Code
+- Profile: $PROFILE_NAME
+- CLAUDE.md imports .agents/AGENTS.md
+- Skills: $(find "$CLAUDE_DIR/skills" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l) · Agents: $(find "$CLAUDE_DIR/agents" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l) · Rules: $(find "$CLAUDE_DIR/rules" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
+- Graphify MCP: .mcp.json (approve the server when Claude Code first asks)
 EOF
 
     success "Created AI_SETUP.md"
@@ -2360,7 +2643,11 @@ if os.path.exists(gitignore_path):
         'tests/ExampleTest.php',
         'jest.config.js',
         'tests/example.test.js',
-        'graphify-out/'
+        'graphify-out/',
+        '.mcp.json',
+        '.claude/skills/',
+        '.claude/agents/',
+        '.claude/rules/'
     ]
     
     lines = content.splitlines()
@@ -2438,6 +2725,7 @@ main() {
     generate_testing_scaffold
     setup_project_memory_and_adr
     setup_git_hooks
+    setup_pre_push_hook
     update_gitignore
 
     # 5. Agent Personas & Workflows Generator
@@ -2447,11 +2735,13 @@ main() {
 
     # 6. Symlink ECC System Assets
     map_ecc_skills
+    map_devmind_skills
     map_ecc_rules
     map_ecc_agents
 
     # 7. Operating Manual & Integration
     create_agents_manifest
+    configure_claude_code
     build_graphify_graph
     initialize_context_manifest
     configure_graphify_mcp

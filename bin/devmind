@@ -8,6 +8,7 @@ Commands:
   devmind impact <file>    - Analyze impact of editing a file (downstream/upstream dependencies)
   devmind blame <file>     - Git intelligence & change rationale for a file
   devmind audit security   - Run automated security scan (secrets, SQLi, XSS, Auth) & score
+  devmind scan [mode]      - Secret Guard: block sensitive data before push (--staged|--pre-push|--range|--all)
   devmind db analyze       - Analyze database schema, foreign keys, missing indexes & N+1 queries
   devmind review           - AI Code Review bot inspecting git diff
   devmind adr create <title> - Create a new Architecture Decision Record (docs/adr/)
@@ -48,9 +49,10 @@ def log_warn(msg):
 def log_err(msg):
     print(f"{RED}[ERROR]{NC} {msg}")
 
-def run_cmd(cmd, cwd=None, capture=True):
+def run_cmd(cmd, cwd=None, capture=True, env=None):
     try:
-        res = subprocess.run(cmd, shell=True, cwd=cwd, text=True, capture_output=capture, stdin=subprocess.DEVNULL)
+        res = subprocess.run(cmd, shell=True, cwd=cwd, text=True, capture_output=capture, stdin=subprocess.DEVNULL,
+                             env={**os.environ, **env} if env else None)
         return res.returncode, res.stdout.strip(), res.stderr.strip()
     except Exception as e:
         return 1, "", str(e)
@@ -217,11 +219,22 @@ def save_context_manifest(project_dir, manifest):
     except Exception as e:
         log_warn(f"Failed to save context manifest: {e}")
 
+FRAPPE_SCAN_SKIP = {".git", "node_modules", "venv", ".venv", "env", "site-packages", "graphify-out", ".agents", ".devmind"}
+
+def has_frappe_app(project_dir, max_depth=4):
+    """A Frappe app package has hooks.py next to modules.txt; a bare hooks.py (e.g. requests/hooks.py in a venv) doesn't count."""
+    for root, dirs, files in os.walk(project_dir):
+        depth = len(Path(root).relative_to(project_dir).parts)
+        dirs[:] = [] if depth >= max_depth else [d for d in dirs if d not in FRAPPE_SCAN_SKIP and not d.endswith("-env")]
+        if "hooks.py" in files and "modules.txt" in files:
+            return True
+    return False
+
 def get_stack_names(project_dir):
     stacks = []
     if (project_dir / "apps.txt").exists() or (project_dir / "sites").exists():
         stacks = ["Python", "Frappe Framework", "ERPNext"]
-    elif any(project_dir.rglob("hooks.py")):
+    elif has_frappe_app(project_dir):
         stacks = ["Python", "Frappe Framework"]
     elif (project_dir / "manage.py").exists():
         stacks = ["Python", "Django"]
@@ -453,7 +466,8 @@ def cmd_sync(project_dir):
             
         if setup_script.exists():
             log_info("Refreshing framework intelligence documents...")
-            rc, out, err = run_cmd(f"\"{setup_script}\" {project_dir}", cwd=project_dir)
+            # The graph was already refreshed above; don't let the setup script rebuild it again
+            rc, out, err = run_cmd(f"\"{setup_script}\" \"{project_dir}\"", cwd=project_dir, env={"DEVMIND_SKIP_GRAPH": "1"})
             if rc == 0:
                 log_ok("Intelligence documents (DATABASE.md, ARCHITECTURE.md, SECURITY.md) refreshed!")
             else:
@@ -1145,6 +1159,304 @@ def cmd_regression(project_dir, good_commit=None, bad_commit=None):
     log_ok(f"Git Bisect completed cleanly! Identified regression commit range: {good}..{bad}")
     print(f"{BOLD}{CYAN}===================================================={NC}\n")
 
+# ---------------------------------------------------------------------------
+# Secret / sensitive-data scanner (used by the pre-push hook and secret-guard skill)
+# ---------------------------------------------------------------------------
+
+ZERO_SHA = "0" * 40
+SECRET_ALLOW_FILE = ".secretscanignore"
+INLINE_ALLOW_MARKER = "devmind:allow-secret"
+SQL_DUMP_MIN_BYTES = 1024 * 1024
+
+# (rule id, description, compiled regex). Matched only against ADDED lines.
+SECRET_PATTERNS = [
+    ("private-key", "Private key block", re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY")),
+    ("aws-access-key", "AWS access key id", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    ("github-token", "GitHub token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})\b")),
+    ("anthropic-key", "Anthropic API key", re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{20,}")),
+    ("openai-key", "OpenAI API key", re.compile(r"\bsk-(?:proj-|svcacct-)?[A-Za-z0-9]{20,}[A-Za-z0-9_\-]*")),
+    ("stripe-live-key", "Stripe live secret key", re.compile(r"\b(?:sk|rk)_live_[0-9a-zA-Z]{16,}")),
+    ("braintree-token", "Braintree production token", re.compile(r"access_token\$production\$[0-9a-z]{16}\$[0-9a-f]{32}")),
+    ("slack-token", "Slack token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}")),
+    ("slack-webhook", "Slack webhook URL", re.compile(r"hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+")),
+    ("google-api-key", "Google API key", re.compile(r"\bAIza[0-9A-Za-z\-_]{35}\b")),
+    ("google-oauth-secret", "Google OAuth client secret", re.compile(r"\bGOCSPX-[A-Za-z0-9_\-]{20,}")),
+    ("shopify-token", "Shopify access token", re.compile(r"\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b")),
+    ("jwt", "JSON Web Token", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")),
+    ("db-url-password", "Connection URL with embedded password",
+     re.compile(r"\b(?:mysql|mariadb|postgres(?:ql)?|mongodb(?:\+srv)?|redis|rediss|amqp)://[^:\s/@'\"]+:([^@\s'\"]{3,})@")),
+    ("hardcoded-credential", "Hard-coded password/secret/token assignment",
+     re.compile(r"""(?i)['"]?\b(?:password|passwd|pwd|db_pass(?:word)?|secret(?:_key)?|client_secret|api_?key|auth_?token|access_?token|private_key)\b['"]?\]?\s*(?:=>|=|:)\s*['"]([^'"\s]{6,})['"]""")),
+]
+
+# Values that look like placeholders rather than real secrets.
+PLACEHOLDER_RE = re.compile(
+    r"(?i)^(?:x{3,}|\*{3,}|\.{3,}|changeme|change_me|password|pass|passwd|pwd|secret|example|sample|dummy|test|"
+    r"testing|null|none|your[_-].*|<.*>|\$\{.*\}|\{\{.*\}\}|%.*%|env\(.*|getenv.*|process\.env.*|os\.environ.*)$"
+)
+
+# Framework validation rules / translation strings that look like `'password' => '...'`.
+VALIDATION_RULE_RE = re.compile(
+    r"(?i)^(?:required|nullable|sometimes|confirmed|string|min:|max:|between:|same:|regex:|in:)|\|")
+
+# Paths where the generic `hardcoded-credential` rule is too noisy (vendored test fixtures,
+# translation files). High-confidence token rules (AWS, Stripe live, Shopify, ...) still apply here.
+GENERIC_RULE_SKIP_PATH_RE = re.compile(
+    r"(?:^|/)(?:vendor|node_modules|bower_components|tests?|spec|fixtures|__tests__|lang|language|locale|locales|i18n)/")
+
+DOTENV_OK_SUFFIXES = (".example", ".sample", ".template", ".dist", ".defaults")
+
+
+def _sensitive_path_reason(path, size_lookup):
+    """Return a reason string if a file path itself must never be pushed."""
+    p = path.replace("\\", "/")
+    name = p.rsplit("/", 1)[-1]
+    lname = name.lower()
+
+    if lname == ".env" or (lname.startswith(".env.") and not lname.endswith(DOTENV_OK_SUFFIXES)):
+        return "Environment file (.env) — keep it local; commit a .env.example instead"
+    if lname.endswith((".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".kdbx", ".ppk")):
+        return "Private key / certificate / keystore file"
+    if re.fullmatch(r"id_(?:rsa|dsa|ecdsa|ed25519)", lname):
+        return "SSH private key"
+    if lname in (".htpasswd", "credentials.json", "client_secret.json", ".git-credentials") or \
+            re.fullmatch(r"service[-_]?account.*\.json", lname):
+        return "Credentials file"
+    if "/.devmind/memory/sessions/" in "/" + p or p.endswith(".devmind/memory/chat-history.md"):
+        return "AI chat history — memory is synced to Google Drive, never to git"
+    if "/.claude/projects/" in "/" + p or (lname.endswith(".jsonl") and "/sessions/" in "/" + p):
+        return "Raw AI session transcript"
+    if lname.endswith((".sql", ".sql.gz", ".sql.zip", ".dump", ".bak")):
+        size = size_lookup(path)
+        if lname.endswith(".sql") and size is not None and size < SQL_DUMP_MIN_BYTES:
+            return None  # small .sql files are usually migrations/schema
+        return "Database dump / backup file (may contain customer data)"
+    return None
+
+
+def _mask(value):
+    value = value.strip()
+    return value[:4] + "***" if len(value) > 12 else value[:2] + "***"
+
+
+def _load_allowlist(repo_dir):
+    globs, regexes = [], []
+    allow_file = Path(repo_dir) / SECRET_ALLOW_FILE
+    if allow_file.is_file():
+        for raw in allow_file.read_text(errors="ignore").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("regex:"):
+                try:
+                    regexes.append(re.compile(line[len("regex:"):].strip()))
+                except re.error:
+                    log_warn(f"Invalid regex in {SECRET_ALLOW_FILE}: {line}")
+            else:
+                globs.append(line)
+    return globs, regexes
+
+
+def _path_allowed(path, globs):
+    import fnmatch
+    return any(fnmatch.fnmatch(path, g) or fnmatch.fnmatch(path.rsplit("/", 1)[-1], g) for g in globs)
+
+
+def _git(repo_dir, *args, stdin=None):
+    res = subprocess.run(["git", "-C", str(repo_dir), *args], text=True, capture_output=True,
+                         input=stdin, errors="replace")
+    return res.returncode, res.stdout, res.stderr
+
+
+def _scan_line(line, path, where, findings, allow_regexes):
+    if INLINE_ALLOW_MARKER in line:
+        return
+    if allow_regexes and any(r.search(line) for r in allow_regexes):
+        return
+    skip_generic = bool(GENERIC_RULE_SKIP_PATH_RE.search(path))
+    for rule_id, desc, rx in SECRET_PATTERNS:
+        if rule_id == "hardcoded-credential" and skip_generic:
+            continue
+        for m in rx.finditer(line):
+            value = m.group(1) if m.groups() and m.group(1) else m.group(0)
+            if rule_id == "hardcoded-credential" and (PLACEHOLDER_RE.match(value) or VALIDATION_RULE_RE.search(value)):
+                continue
+            if rule_id == "db-url-password" and (PLACEHOLDER_RE.match(value) or value.startswith(("$", "%"))):
+                continue
+            preview = m.group(0).replace(value, _mask(value)) if value != m.group(0) else _mask(value)
+            findings.append({"rule": rule_id, "desc": desc, "path": path, "where": where,
+                             "preview": preview[:70]})
+            break  # one finding per rule per line is enough
+
+
+def _scan_patch(patch_text, findings, allow_globs, allow_regexes, size_lookup_for):
+    """Parse `git log -p` / `git diff` output and scan added lines + touched paths."""
+    commit = "staged"
+    path = None
+    deleted = False
+    line_no = 0
+    seen_paths = set()
+    for raw in patch_text.splitlines():
+        if raw.startswith("\x00COMMIT "):
+            commit = raw.split(" ", 1)[1][:9]
+            continue
+        if raw.startswith("diff --git "):
+            m = re.match(r'diff --git "?a/(.+?)"? "?b/(.+?)"?$', raw)
+            path = m.group(2) if m else None
+            deleted = False
+            continue
+        if raw.startswith("deleted file mode"):
+            deleted = True
+            continue
+        if path and not deleted and (raw.startswith("new file mode") or raw.startswith("+++ ") or raw.startswith("Binary files")):
+            key = (commit, path)
+            if key not in seen_paths:
+                seen_paths.add(key)
+                if not _path_allowed(path, allow_globs):
+                    reason = _sensitive_path_reason(path, size_lookup_for(commit))
+                    if reason:
+                        findings.append({"rule": "sensitive-file", "desc": reason, "path": path,
+                                         "where": f"commit {commit}", "preview": ""})
+            continue
+        if raw.startswith("@@"):
+            m = re.search(r"\+(\d+)", raw)
+            line_no = int(m.group(1)) - 1 if m else 0
+            continue
+        if raw.startswith("+") and not raw.startswith("+++") and path and not deleted:
+            line_no += 1
+            if _path_allowed(path, allow_globs):
+                continue
+            _scan_line(raw[1:], path, f"{commit} L{line_no}", findings, allow_regexes)
+
+
+def _pre_push_ranges(repo_dir, stdin_text):
+    """Turn pre-push hook stdin into a list of rev-list argument lists."""
+    ranges = []
+    for line in stdin_text.splitlines():
+        parts = line.split()
+        if len(parts) != 4:
+            continue
+        _local_ref, local_sha, _remote_ref, remote_sha = parts
+        if local_sha == ZERO_SHA:
+            continue  # branch deletion, nothing to scan
+        remote_known = remote_sha != ZERO_SHA and _git(repo_dir, "cat-file", "-e", f"{remote_sha}^{{commit}}")[0] == 0
+        if remote_known:
+            ranges.append([f"{remote_sha}..{local_sha}"])
+        else:
+            ranges.append([local_sha, "--not", "--remotes"])
+    if not ranges and not stdin_text.strip():
+        # Stdin was already consumed (e.g. another hook ran first) — scan unpushed commits on HEAD.
+        ranges.append(["HEAD", "--not", "--remotes"])
+    return ranges
+
+
+def cmd_scan(project_dir, args):
+    """devmind scan [--staged | --pre-push | --range A..B | --all]"""
+    rc, top, _ = _git(project_dir, "rev-parse", "--show-toplevel")
+    if rc != 0:
+        log_err("Not inside a git repository.")
+        sys.exit(2)
+    repo_dir = Path(top.strip())
+    allow_globs, allow_regexes = _load_allowlist(repo_dir)
+    findings = []
+
+    mode = args[0] if args else "--staged"
+
+    if os.environ.get("DEVMIND_SKIP_SECRET_SCAN") == "1":
+        log_warn("DEVMIND_SKIP_SECRET_SCAN=1 set — secret scan skipped by the user.")
+        sys.exit(0)
+
+    if mode == "--staged":
+        _, patch, _ = _git(repo_dir, "diff", "--cached", "--no-color", "--no-ext-diff", "-U0")
+
+        def size_lookup_for(_commit):
+            def lookup(path):
+                r, out, _ = _git(repo_dir, "cat-file", "-s", f":{path}")
+                return int(out.strip()) if r == 0 and out.strip().isdigit() else None
+            return lookup
+        _scan_patch(patch, findings, allow_globs, allow_regexes, size_lookup_for)
+        scope = "staged changes"
+
+    elif mode in ("--pre-push", "--range"):
+        if mode == "--pre-push":
+            stdin_text = "" if sys.stdin.isatty() else sys.stdin.read()
+            ranges = _pre_push_ranges(repo_dir, stdin_text)
+        else:
+            if len(args) < 2:
+                log_err("Usage: devmind scan --range <from>..<to>  |  devmind scan --range HEAD --not --remotes")
+                sys.exit(2)
+            ranges = [args[1:]]  # e.g. `@{u}..HEAD` or `HEAD --not --remotes`
+
+        commit_full = {}
+
+        def size_lookup_for(short):
+            def lookup(path):
+                sha = commit_full.get(short, short)
+                r, out, _ = _git(repo_dir, "cat-file", "-s", f"{sha}:{path}")
+                return int(out.strip()) if r == 0 and out.strip().isdigit() else None
+            return lookup
+
+        for rev_args in ranges:
+            r, patch, err = _git(repo_dir, "log", "-p", "--no-color", "--no-ext-diff", "-U0",
+                                 "--format=%x00COMMIT %H", *rev_args)
+            if r != 0:
+                log_err(f"git log failed for {' '.join(rev_args)}: {err.strip()}")
+                sys.exit(2)
+            for l in patch.splitlines():
+                if l.startswith("\x00COMMIT "):
+                    full = l.split(" ", 1)[1].strip()
+                    commit_full[full[:9]] = full
+            _scan_patch(patch, findings, allow_globs, allow_regexes, size_lookup_for)
+        scope = "commits being pushed"
+
+    elif mode == "--all":
+        _, files, _ = _git(repo_dir, "ls-files", "-z")
+        for path in filter(None, files.split("\x00")):
+            if _path_allowed(path, allow_globs):
+                continue
+            full = repo_dir / path
+            reason = _sensitive_path_reason(path, lambda p: full.stat().st_size if full.is_file() else None)
+            if reason:
+                findings.append({"rule": "sensitive-file", "desc": reason, "path": path, "where": "tracked", "preview": ""})
+                continue
+            try:
+                if not full.is_file() or full.stat().st_size > 2 * 1024 * 1024:
+                    continue
+                data = full.read_bytes()
+                if b"\x00" in data[:8000]:
+                    continue  # binary
+                for i, line in enumerate(data.decode("utf-8", errors="ignore").splitlines(), 1):
+                    _scan_line(line, path, f"L{i}", findings, allow_regexes)
+            except OSError:
+                continue
+        scope = "all tracked files"
+
+    else:
+        log_err(f"Unknown scan mode: {mode}")
+        print("Usage: devmind scan [--staged | --pre-push | --range <from>..<to> | --all]")
+        sys.exit(2)
+
+    if not findings:
+        log_ok(f"Secret scan passed — no sensitive data found in {scope}.")
+        sys.exit(0)
+
+    print(f"\n{BOLD}{RED}🚫 DevMind Secret Guard: {len(findings)} sensitive item(s) found in {scope}{NC}\n")
+    for f in findings:
+        preview = f"  {YELLOW}{f['preview']}{NC}" if f["preview"] else ""
+        print(f"  {RED}✗{NC} [{f['rule']}] {f['desc']}\n      {CYAN}{f['path']}{NC} ({f['where']}){preview}")
+    print(f"""
+{BOLD}How to fix:{NC}
+  1. Remove the secret from the file and load it from .env / environment variables instead.
+  2. If it is already committed, rewrite the unpushed commit(s):
+       git reset --soft <last-pushed-commit>   (or: git commit --amend after fixing)
+     and if the file must stay local:  git rm --cached <file> && echo <file> >> .gitignore
+  3. If a real key was ever pushed anywhere, ROTATE it — deleting it from git is not enough.
+  4. False positive? Add '{INLINE_ALLOW_MARKER}' as a comment on that line, or add the path glob
+     (or 'regex:<pattern>') to {SECRET_ALLOW_FILE} at the repo root.
+""")
+    sys.exit(1)
+
+
 def print_help():
     print(f"""{BOLD}DevMind CLI v3.0.0 — Enterprise AI Operating System{NC}
 
@@ -1162,6 +1474,7 @@ Commands:
   {CYAN}impact <file>{NC}    Impact analysis of editing a file or symbol
   {CYAN}blame <file>{NC}     Git intelligence & historical change rationale
   {CYAN}audit security{NC}   Run security scanner (secrets, OWASP, SQLi/XSS)
+  {CYAN}scan [mode]{NC}      Secret Guard: --staged (default) | --pre-push | --range A..B | --all
   {CYAN}db analyze{NC}       Analyze database architecture, foreign keys & indexes
   {CYAN}review{NC}           AI Code Review Bot inspecting uncommitted git diff
   {CYAN}adr create <t>{NC}  Create Architecture Decision Record (docs/adr/)
@@ -1207,6 +1520,8 @@ def main():
         cmd_blame(project_dir, target)
     elif cmd == "audit" and len(sys.argv) > 2 and sys.argv[2] == "security":
         cmd_security(project_dir)
+    elif cmd == "scan":
+        cmd_scan(project_dir, sys.argv[2:])
     elif cmd == "db" and len(sys.argv) > 2 and sys.argv[2] == "analyze":
         cmd_db_analyze(project_dir)
     elif cmd == "review":

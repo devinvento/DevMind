@@ -7,8 +7,11 @@ skills:
   - bun-runtime
 agents:
   - architect
-  - backend-developer
+  - typescript-reviewer
+  - security-reviewer
 rules:
-  - api
-  - testing
-  - project-specific
+  - common/coding-style
+  - common/security
+  - common/testing
+  - common/git-workflow
+  - typescript

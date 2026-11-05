@@ -8,9 +8,12 @@ skills:
   - postgres-patterns
 agents:
   - architect
-  - backend-developer
-  - database-expert
+  - fastapi-reviewer
+  - python-reviewer
+  - database-reviewer
 rules:
-  - api
-  - testing
-  - project-specific
+  - common/coding-style
+  - common/security
+  - common/testing
+  - common/git-workflow
+  - python
