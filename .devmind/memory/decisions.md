@@ -88,3 +88,9 @@ This document records the major architectural choices made in the project.
 - **Decision**: Design and implementation plan generated for task: FEATURE [6e54fba]: feat: add automated secret guard scanner and frappe framework detection logic
 - **Reason**: Automatically logged during feature planning command execution.
 - **Status**: Proposed
+
+### 15. Implement Feature: FEATURE [158d071]: feat: add automated secret guard scanner and frappe framework detection logic
+- **Date**: 2026-11-05
+- **Decision**: Design and implementation plan generated for task: FEATURE [158d071]: feat: add automated secret guard scanner and frappe framework detection logic
+- **Reason**: Automatically logged during feature planning command execution.
+- **Status**: Proposed
