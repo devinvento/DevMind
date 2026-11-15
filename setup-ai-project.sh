@@ -1605,36 +1605,93 @@ EOF
     esac
 }
 
-# Copies DevMind's first-party skills into the project's .agents/skills/. The single source is
-# vscode-extension/resources/skills/ (the same files the VS Code extension bundles in the VSIX
-# and auto-installs on activation; see vscode-extension/src/skillInstaller.ts).
-# Same overwrite policy as the extension: update only copies with `origin: DevMind` and an older
-# `version:`; never touch customised skills.
+# Installs DevMind's bundled skills and agents into the project's .agents/ (configure_claude_code
+# then mirrors them into .claude/). The single source is vscode-extension/resources/ (manifest.json,
+# skills/, agents/): the same files the VS Code extension bundles in the VSIX and auto-installs on
+# activation (see vscode-extension/src/skillInstaller.ts). Same rules as the extension:
+#   - `when` condition per entry: always | frappe | codeigniter-phppos
+#   - only copies marked origin DevMind with an older version are updated; customised ones are kept
 map_devmind_skills() {
-    local src_dir="$SCRIPT_SOURCE_DIR/vscode-extension/resources/skills"
-    [[ -d "$src_dir" ]] || return 0
-    mkdir -p "$SKILLS_DIR"
-    local skill_dir name target src_ver dst_ver mapped=0
-    for skill_dir in "$src_dir"/*/; do
-        [[ -f "$skill_dir/SKILL.md" ]] || continue
-        name="$(basename "$skill_dir")"
-        target="$SKILLS_DIR/$name"
-        src_ver="$(sed -n 's/^[[:space:]]*version:[[:space:]]*\([0-9]*\).*/\1/p' "$skill_dir/SKILL.md" | head -1)"
-        if [[ -L "$target" ]]; then
-            rm -f "$target"
-        elif [[ -f "$target/SKILL.md" ]]; then
-            if ! grep -q '^[[:space:]]*origin:[[:space:]]*DevMind' "$target/SKILL.md"; then
-                warn "Custom skill '$name' found (origin is not DevMind). Preserving it."
-                continue
-            fi
-            dst_ver="$(sed -n 's/^[[:space:]]*version:[[:space:]]*\([0-9]*\).*/\1/p' "$target/SKILL.md" | head -1)"
-            (( ${dst_ver:-0} >= ${src_ver:-0} )) && continue
-        fi
-        mkdir -p "$target"
-        cp -R "${skill_dir%/}/." "$target/"
-        mapped=$((mapped + 1))
-    done
-    success "Installed/updated $mapped DevMind skills into $SKILLS_DIR"
+    local res_dir="$SCRIPT_SOURCE_DIR/vscode-extension/resources"
+    [[ -f "$res_dir/manifest.json" ]] || return 0
+    mkdir -p "$SKILLS_DIR" "$AGENTS_AGENTS_DIR"
+    local result
+    result=$(RES="$res_dir" PROJ="$PROJECT_DIR" SKILLS="$SKILLS_DIR" AGENTS="$AGENTS_AGENTS_DIR" python3 - <<'PY'
+import json, os, re, shutil
+from pathlib import Path
+res, proj = Path(os.environ["RES"]), Path(os.environ["PROJ"])
+skills_dst, agents_dst = Path(os.environ["SKILLS"]), Path(os.environ["AGENTS"])
+manifest = json.loads((res / "manifest.json").read_text())
+SKIP = {"node_modules", ".git", "env", "venv", ".venv", "sites", "logs", "__pycache__", "dist", "build",
+        "assets", "vendor", ".agents", ".claude", ".devmind", "graphify-out"}
+
+def is_frappe():
+    for root, dirs, files in os.walk(proj):
+        depth = len(Path(root).relative_to(proj).parts)
+        dirs[:] = [] if depth >= 4 else [d for d in dirs if d not in SKIP and not d.endswith("-env") and not d.startswith(".")]
+        if "hooks.py" in files and "modules.txt" in files:
+            return True
+    return False
+
+def is_phppos():
+    try:
+        return bool(re.search(r"\[['\"]dbprefix['\"]\]\s*=\s*['\"]phppos_['\"]",
+                              (proj / "application/config/database.php").read_text(errors="ignore")))
+    except OSError:
+        return False
+
+cache = {}
+def ok(when):
+    when = when or "always"
+    if when == "always":
+        return True
+    if when not in cache:
+        cache[when] = is_frappe() if when == "frappe" else is_phppos() if when == "codeigniter-phppos" else False
+    return cache[when]
+
+def skill_info(text):
+    o = re.search(r"^\s*origin:\s*(\S+)", text, re.M); v = re.search(r"^\s*version:\s*(\d+)", text, re.M)
+    return (o.group(1) if o else None), int(v.group(1)) if v else 0
+
+def agent_info(text):
+    m = re.search(r"<!--\s*devmind-managed:\s*origin=(\S+)\s+version=(\d+)", text)
+    return (m.group(1), int(m.group(2))) if m else (None, 0)
+
+done, kept = 0, []
+for name, spec in manifest.get("skills", {}).items():
+    src = res / "skills" / name
+    if not (src / "SKILL.md").exists() or not ok(spec.get("when")):
+        continue
+    dst = skills_dst / name
+    if dst.is_symlink():
+        dst.unlink()
+    elif (dst / "SKILL.md").exists():
+        o, v = skill_info((dst / "SKILL.md").read_text(errors="ignore"))
+        if o != "DevMind":
+            kept.append(f"skill {name}"); continue
+        if v >= skill_info((src / "SKILL.md").read_text())[1]:
+            continue
+    shutil.copytree(src, dst, dirs_exist_ok=True); done += 1
+for name, spec in manifest.get("agents", {}).items():
+    src = res / "agents" / f"{name}.md"
+    if not src.exists() or not ok(spec.get("when")):
+        continue
+    dst = agents_dst / f"{name}.md"
+    if dst.exists() and not dst.is_symlink():
+        o, v = agent_info(dst.read_text(errors="ignore"))
+        if o != "DevMind":
+            kept.append(f"agent {name}"); continue
+        if v >= agent_info(src.read_text())[1]:
+            continue
+    if dst.is_symlink():
+        dst.unlink()
+    shutil.copy2(src, dst); done += 1
+print(f"{done}|{', '.join(kept)}")
+PY
+)
+    local n="${result%%|*}" kept="${result#*|}"
+    [[ -n "$kept" ]] && warn "Customised DevMind assets preserved: $kept"
+    success "Installed/updated $n DevMind skills & agents (manifest: vscode-extension/resources/manifest.json)"
 }
 
 ###############################################################################

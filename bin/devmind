@@ -846,11 +846,21 @@ Do not include any other text or code blocks. Just output the sections starting 
         log_warn(f"Failed to generate ADR body via LLM API: {e}")
         return None
 
+ADR_SLUG_MAX = 80
+
+
 def cmd_adr_create(project_dir, title):
     adr_dir = project_dir / "docs" / "adr"
     adr_dir.mkdir(parents=True, exist_ok=True)
 
-    slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')
+    # Commit hooks pass the whole message (body, trailers): keep it as context for the AI,
+    # but title and file name come from the first line only.
+    details = title.strip()
+    title = details.splitlines()[0].strip() if details else "Untitled"
+
+    slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-') or "untitled"
+    if len(slug) > ADR_SLUG_MAX:  # filesystems cap names at 255 bytes
+        slug = slug[:ADR_SLUG_MAX].rsplit('-', 1)[0] or slug[:ADR_SLUG_MAX]
     existing = list(adr_dir.glob("*.md"))
     for f in existing:
         if f.name.endswith(f"-{slug}.md") or f.name == f"{slug}.md":
@@ -868,7 +878,7 @@ def cmd_adr_create(project_dir, title):
         commit_hash = match.group(1)
 
     log_info("Generating ADR content...")
-    ai_content = generate_adr_content_via_ai(project_dir, title, commit_hash)
+    ai_content = generate_adr_content_via_ai(project_dir, details or title, commit_hash)
 
     if ai_content:
         log_ok("Successfully generated ADR content via AI!")
@@ -1186,14 +1196,19 @@ SECRET_PATTERNS = [
     ("jwt", "JSON Web Token", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")),
     ("db-url-password", "Connection URL with embedded password",
      re.compile(r"\b(?:mysql|mariadb|postgres(?:ql)?|mongodb(?:\+srv)?|redis|rediss|amqp)://[^:\s/@'\"]+:([^@\s'\"]{3,})@")),
+    # Key may carry a prefix such as SUNDORA_DB_PASSWORD / mysql_root_password ("[\w.-]*?").
     ("hardcoded-credential", "Hard-coded password/secret/token assignment",
-     re.compile(r"""(?i)['"]?\b(?:password|passwd|pwd|db_pass(?:word)?|secret(?:_key)?|client_secret|api_?key|auth_?token|access_?token|private_key)\b['"]?\]?\s*(?:=>|=|:)\s*['"]([^'"\s]{6,})['"]""")),
+     re.compile(r"""(?i)['"]?\b[\w.-]*?(?:password|passwd|pwd|db_pass(?:word)?|secret(?:_key)?|client_secret|api_?key|auth_?token|access_?token|private_key)\b['"]?\]?\s*(?:=>|=|:)\s*['"]([^'"\s]{6,})['"]""")),
+    # Unquoted env / docker-compose style: DB_PASSWORD=abc, export X_TOKEN=abc, - MYSQL_PASSWORD=abc, KEY: abc
+    ("env-credential", "Credential in env / config assignment",
+     re.compile(r"""(?m)^\s*(?:-\s*)?(?:export\s+)?[A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|APIKEY|PRIVATE_KEY)[A-Z0-9_]*(?:=|:\s+)([^\s'"#]{6,})""")),
+    # (no spaces around "=": real env files; Python/JS constants like `SECRET_KEY = getenv(...)` are not matched)
 ]
 
 # Values that look like placeholders rather than real secrets.
 PLACEHOLDER_RE = re.compile(
     r"(?i)^(?:x{3,}|\*{3,}|\.{3,}|changeme|change_me|password|pass|passwd|pwd|secret|example|sample|dummy|test|"
-    r"testing|null|none|your[_-].*|<.*>|\[REDACTED:.*\]|\$\{.*\}|\{\{.*\}\}|%.*%|env\(.*|getenv.*|process\.env.*|"
+    r"testing|null|none|your[_-].*|<.*>|\[REDACTED:.*\]|\\?\$[A-Za-z_{(].*|\{\{.*\}\}|%.*%|env\(.*|getenv.*|process\.env.*|"
     r"os\.environ.*)$"
 )
 
@@ -1204,7 +1219,8 @@ VALIDATION_RULE_RE = re.compile(
 # Paths where the generic `hardcoded-credential` rule is too noisy (vendored test fixtures,
 # translation files). High-confidence token rules (AWS, Stripe live, Shopify, ...) still apply here.
 GENERIC_RULE_SKIP_PATH_RE = re.compile(
-    r"(?:^|/)(?:vendor|node_modules|bower_components|tests?|spec|fixtures|__tests__|lang|language|locale|locales|i18n)/")
+    r"(?:^|/)(?:vendor|node_modules|bower_components|tests?|spec|fixtures|__tests__|lang|language|locale|locales|i18n|libs?|dist)/"
+    r"|\.min\.js$")
 
 DOTENV_OK_SUFFIXES = (".example", ".sample", ".template", ".dist", ".defaults")
 
@@ -1277,13 +1293,16 @@ def _scan_line(line, path, where, findings, allow_regexes):
         return
     skip_generic = bool(GENERIC_RULE_SKIP_PATH_RE.search(path))
     for rule_id, desc, rx in SECRET_PATTERNS:
-        if rule_id == "hardcoded-credential" and skip_generic:
+        if rule_id in ("hardcoded-credential", "env-credential") and skip_generic:
             continue
         for m in rx.finditer(line):
             value = m.group(1) if m.groups() and m.group(1) else m.group(0)
             if rule_id == "hardcoded-credential" and (PLACEHOLDER_RE.match(value) or VALIDATION_RULE_RE.search(value)):
                 continue
             if rule_id == "db-url-password" and (PLACEHOLDER_RE.match(value) or value.startswith(("$", "%"))):
+                continue
+            if rule_id == "env-credential" and (PLACEHOLDER_RE.match(value) or value.lstrip("\\").startswith(("$", "%", "<", "{"))
+                                                or re.fullmatch(r"\d+|true|false|yes|no", value, re.I)):
                 continue
             preview = m.group(0).replace(value, _mask(value)) if value != m.group(0) else _mask(value)
             findings.append({"rule": rule_id, "desc": desc, "path": path, "where": where,
@@ -1521,8 +1540,10 @@ def _redact(text):
         def repl(m):
             whole = m.group(0)
             value = m.group(1) if m.groups() and m.group(1) else whole
-            if rule_id in ("hardcoded-credential", "db-url-password") and (
-                    PLACEHOLDER_RE.match(value) or VALIDATION_RULE_RE.search(value)):
+            if rule_id in ("hardcoded-credential", "db-url-password", "env-credential") and (
+                    PLACEHOLDER_RE.match(value) or VALIDATION_RULE_RE.search(value)
+                    or (rule_id == "env-credential" and (value.lstrip("\\").startswith(("$", "%", "<", "{"))
+                                                         or re.fullmatch(r"\d+|true|false|yes|no", value, re.I)))):
                 return whole
             return whole.replace(value, f"[REDACTED:{rule_id}]")
         return repl

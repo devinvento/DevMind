@@ -17,7 +17,8 @@ An intelligent, developer-friendly **AI Engineering Operating System & Unified C
 | 🛡️ **Secret Guard** | `devmind scan` + a git **pre-push hook** block pushes that contain API keys, passwords, tokens, private keys, `.env` files, DB dumps, or AI chat history. Works for humans *and* AI agents. |
 | ☁️ **AI Memory Sync (Google Drive)** | `devmind memory push/pull` syncs chat history, session summaries, Claude auto-memory, and resumable Claude transcripts between machines (e.g. office PC ⇄ home PC). |
 | 🔌 **One-click "Connect Google Drive"** | The VS Code extension installs `rclone` (no sudo, SHA256-verified), opens the Google login, and verifies access. It uses the `drive.file` scope only. |
-| 🧩 **Auto-installed AI skills** | The VSIX bundles the `secret-guard` skill and writes it into every project's `.agents/skills/` and `.claude/skills/` on activation. |
+| 🧩 **Auto-installed AI skills & agents** | The VSIX bundles `secret-guard`, `brd-to-production`, `ba-feature-test`, `ba-qa-architect` (+ `frappe-report-dashboard-builder` for Frappe projects) and the 7 `brd-*` agents. They are written into every project's `.agents/` and `.claude/` on activation. |
+| 🗄️ **sundora-db MCP** | One-click setup of a read-only MySQL MCP server for CodeIgniter POS projects (`phppos_`), with secret-column masking. |
 | 🧱 **Stack profiles** | `profiles/*.yaml` (Frappe, Laravel, Django, FastAPI, Next.js, React, Node, Generic) choose which ECC skills, agents, and rules each project gets. Nested Frappe apps are auto-detected. |
 | 🌌 **Antigravity IDE support** | `rebuild-and-install.sh` now also installs the VSIX into Antigravity IDE. |
 
@@ -294,7 +295,7 @@ A git **pre-push hook** runs `devmind scan --pre-push` on every push and blocks 
 | Detects | Examples |
 | :--- | :--- |
 | Tokens & keys | AWS, GitHub, Anthropic, OpenAI, Stripe live, Braintree production, Slack, Google API/OAuth, Shopify, JWT, private key blocks |
-| Credentials | Hard-coded `password`/`secret`/`api_key`/`token` assignments (incl. CodeIgniter `$db['default']['password']`), DB URLs with passwords |
+| Credentials | Hard-coded `password`/`secret`/`api_key`/`token` assignments (incl. CodeIgniter `$db['default']['password']` and prefixed keys like `"SUNDORA_DB_PASSWORD": "…"`), env/docker-compose values (`DB_PASSWORD=…`, `- POSTGRES_PASSWORD=…`, `REDIS_PASSWORD: …`), DB URLs with passwords |
 | Sensitive files | `.env*` (except `.example/.sample/.template/.dist`), `*.pem/*.key/*.p12/*.pfx`, SSH keys, `credentials.json`, service-account JSON, `.htpasswd`, DB dumps (> 1 MB `.sql`, `.dump`, `.bak`) |
 | AI memory | `.devmind/memory/sessions/`, `chat-history.md`, raw Claude transcripts |
 
@@ -312,6 +313,46 @@ A git **pre-push hook** runs `devmind scan --pre-push` on every push and blocks 
 **One-time bypass** (humans only, after checking the findings): `DEVMIND_SKIP_SECRET_SCAN=1 git push`.
 
 > If a real key was ever pushed, **rotate it** at the provider. Removing it from git history does not undo the exposure.
+
+---
+
+## 🧩 Bundled Skills, Agents & MCP (installed by the extension)
+
+The VSIX ships `vscode-extension/resources/`. `manifest.json` decides what goes where, and `setup-ai-project.sh` uses the same manifest.
+
+| Item | Type | Installed into | When |
+| :--- | :--- | :--- | :--- |
+| `secret-guard` | Skill | `.agents/skills/`, `.claude/skills/` | Every project |
+| `brd-to-production` | Skill | same | Every project |
+| `ba-feature-test` | Skill | same | Every project |
+| `ba-qa-architect` | Skill | same | Every project |
+| `frappe-report-dashboard-builder` | Skill | same | Frappe projects (an app with `hooks.py` + `modules.txt`) |
+| `brd-analyst`, `brd-project-analyst`, `brd-architect`, `brd-implementer`, `brd-test-engineer`, `brd-ui-tester`, `brd-auditor` | Agents | `.agents/agents/`, `.claude/agents/` | Every project (used by `brd-to-production`) |
+| `sundora-db` | MCP server | `.mcp.json` (after you agree) | CodeIgniter POS projects (`dbprefix = 'phppos_'`). The extension offers it once per project |
+
+**Update rules:**
+- Bundled copies carry `origin: DevMind` + `version:` (skills) or a `<!-- devmind-managed … -->` marker (agents).
+- A newer extension updates only those copies.
+- A copy you customise (or mark `origin: custom`) is never overwritten. This also covers projects that already had their own versions.
+- Manual command: **`DevMind: Install AI Skills & Agents`**.
+
+### 🗄️ sundora-db MCP (read-only POS database)
+
+Run **`DevMind: Set Up sundora-db MCP`** (also suggested automatically in POS projects):
+1. It reads defaults from `application/config/database.php` and can copy the SQL that creates a read-only `mcp_ro` user.
+2. It asks for host, port, user, password and prefix.
+3. It tests the connection with `server.py --check`. On the first run, `uv` downloads the Python dependencies.
+4. It writes `.mcp.json` (mode `600`, added to `.gitignore`).
+
+The server is copied to `~/.local/share/devmind/mcp/sundora-db/`, so the config survives extension updates.
+
+**Safety layers:**
+- `SELECT`-only MySQL user.
+- Single read-only statements (`INSERT/UPDATE/DELETE/DROP/LOAD_FILE/INTO OUTFILE/SLEEP…` are rejected).
+- `READ ONLY` session, 15 s timeout, 500-row cap.
+- **Secret columns are masked.** `password`, `token`, `api_key`, `salt`, `hash`, `otp`, card numbers…, plus key/value config rows such as `phppos_app_config.shopify_api_password`. This keeps them out of AI context, transcripts and synced memory. Set `SUNDORA_DB_UNMASK=1` only if you really need them.
+
+> Avoid `'mcp_ro'@'%'`: restrict the user to the client host. Without TLS, use it only on localhost or through an SSH tunnel.
 
 ---
 
@@ -398,6 +439,6 @@ Click **☁️ Connect Google Drive** in the status bar, or run `devmind memory 
 
 ### 4. Run the Tests
 ```bash
-python3 -m unittest tests/test_secret_scan.py tests/test_memory_sync.py
+python3 -m unittest tests/test_secret_scan.py tests/test_memory_sync.py tests/test_sundora_mcp.py
 ```
 The tests cover Secret Guard detection and false positives, pre-push ranges, two-machine memory sync with a folder backend, redaction, transcript `/resume` import with path rewriting, conflict handling, Claude memory merging, and the rclone token parser.

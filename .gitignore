@@ -60,3 +60,11 @@ phpunit.xml
 tests/ExampleTest.php
 jest.config.js
 tests/example.test.js
+
+
+vscode-extension/
+.claude/
+.devmind/
+tests/
+vscode-extension
+.devmind/memory/
