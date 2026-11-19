@@ -3,7 +3,7 @@ name: brd-to-production
 description: Universal multi-agent BRD-to-production workflow for any stack (Python, FastAPI, Django, Frappe/ERPNext, Odoo, Laravel, CodeIgniter 3/4, Node, or anything else). Independent read-only agents analyse a BRD and the existing project, an architect compares them and writes a phased proposal, a hard human-approval gate follows, then each phase is built by an implementation agent, tested by independent unit/scenario and browser/API agents with real executed evidence (JUnit XML or runner output), fixed and retested in a loop, checked by deterministic gate scripts, and committed; a final independent auditor produces a BRD compliance report. Use when the user provides a BRD, PRD, SRS or feature spec, or asks to "run the BRD workflow", "analyze this BRD", "plan BRD implementation", "approve proposal", "resume BRD delivery", "start phase N", or "final audit".
 metadata:
   origin: DevMind
-  version: 2
+  version: 3
 ---
 
 <!-- Managed by the DevMind VS Code extension: auto-updated when a newer version ships.
@@ -37,6 +37,13 @@ If a `brd-*` agent type is not available, use `general-purpose`. That happens wh
 started before the files were installed. Paste the matching `.claude/agents/<name>.md` as the
 start of the prompt. Other agent hosts, such as Antigravity's `invoke_subagent`, take the same
 file as the system prompt.
+
+**Fresh agents per phase.** Start a **new** implementer and **new** testers for every phase, and
+name each one after its phase and role (description `Phase N implementation`, `Phase N unit tests`,
+`Phase N browser tests`, `Phase N shard S2`). Use SendMessage only to continue an agent **inside
+its own phase**: gap rounds, fix rounds and retests. Never send a later phase's task to an earlier
+phase's agent. A reused agent carries every earlier phase in its context, so each turn costs more
+and old decisions leak into new work. Everything a new agent needs is in the workspace files.
 
 **Independence:** testers get the requirements, the plan section, the diff summary, the profile and
 the test environment. They never get `implementation.md`, the implementer's summary, or your
@@ -221,15 +228,17 @@ Start `brd-architect`. Then check the plan:
 
 ### Steps 5 to 9: phase loop, for N = 1..last
 1. **Start.** `GATE phase-start WS N`.
-2. **Implement.** Start `brd-implementer` with the phase section of `03-plan.md`, the REQ and AC
-   text, the conventions from `02-project-analysis.md`, and the profile.
+2. **Implement.** Start a **new** `brd-implementer` (description `Phase N implementation`; never
+   reuse the previous phase's agent) with the phase section of `03-plan.md`, the REQ and AC text,
+   the conventions from `02-project-analysis.md`, and the profile.
 3. **Scope gate.** Run `GATE scope WS N`.
    - `!` lines are protected paths or an untracked credentials file. They are always fixed and never accepted.
    - `-` lines go back to the implementer, to revert or to justify.
    - `~` lines are justified changes, and you tell the user about them.
 4. **Self-check.** The implementer's lint and test output in `implementation.md` must be clean before testing starts.
 5. **Test, in parallel.** Run `GATE shards WS N`.
-   - **`NO SHARDS`:** start `brd-test-engineer` and `brd-ui-tester` in the **same turn**.
+   - **`NO SHARDS`:** start a **new** `brd-test-engineer` and a **new** `brd-ui-tester` in the
+     **same turn** (descriptions `Phase N unit tests` and `Phase N browser tests`).
    - **Shards:** start every shard listed in `WAVE 1` in the **same turn**, as background agents,
      each with its shard id, its own ACs only, and `WS/phases/phase-N/shards/<id>/` as its output
      folder. Whenever a shard finishes, run `GATE shards WS N --done <ids> --running <ids> --failed <ids>`
@@ -258,7 +267,7 @@ Start `brd-architect`. Then check the plan:
    a missing file, or evidence that doesn't match sends the report back to its tester.
 8. **Fix loop**, when there is any FAIL, an unverified bug, or an AC without a confirmed PASS:
    - Run `GATE fix-round WS N`. Exit 1 means more than 3 rounds: stop and ask the user.
-   - Send the implementer only the bug entries, not the testers' guesses about the cause.
+   - Send this phase's implementer (SendMessage) only the bug entries, not the testers' guesses about the cause.
    - Re-run steps 3 and 4.
    - Ask the testers (with shards: the failed shards, then the BLOCKED ones), through SendMessage,
      to re-run the failed cases into new numbered evidence files. Then run `GATE shard-merge WS N`
@@ -299,3 +308,4 @@ user's approval, and that phase goes through the same loop.
 9. **Regression runs every phase.** That means the whole test suite plus every flow file, through `GATE regression`, after the last change.
 10. **Never touch production.** No production data, URLs, sites or databases. Never print or commit credentials.
 11. **Keep the full record.** Everything that happened is in `docs/brd-to-production/`.
+12. **One phase per agent.** Every phase gets new implementer and tester agents. SendMessage never carries an agent into the next phase.

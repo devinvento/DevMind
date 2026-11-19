@@ -5,42 +5,67 @@ import { registerCommands } from './commands';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as child_process from 'child_process';
-import { installBundledSkills } from './skillInstaller';
+import { installBundledAssets } from './skillInstaller';
 import { MemorySync } from './memorySync';
+import { registerSundoraDbMcp, suggestSundoraDbMcp } from './mcpSetup';
 
 let memorySync: MemorySync | undefined;
 
 /**
- * Writes the skills bundled in the VSIX (resources/skills/) into every open workspace folder's
- * .agents/skills/ and .claude/skills/. Runs on activation (right after the VSIX is installed and
- * on every window open), when folders are added, and from the "DevMind: Install AI Skills" command.
+ * Older DevMind setups wrote `@ARCHITECTURE.md`, `@DATABASE.md` and `@SECURITY.md` into CLAUDE.md.
+ * Claude Code inlines `@` imports into every session, so a large DATABASE.md burned hundreds of
+ * thousands of tokens per message. Remove those import lines (the files themselves are left alone).
+ */
+function stripDocImports(root: string): boolean {
+    const file = path.join(root, 'CLAUDE.md');
+    if (!fs.existsSync(file)) { return false; }
+    const text = fs.readFileSync(file, 'utf8');
+    const cleaned = text.replace(/^[ \t]*-[ \t]*(?:Architecture|Database|Security):[ \t]*@(?:ARCHITECTURE|DATABASE|SECURITY)\.md[ \t]*\r?\n/gm, '');
+    if (cleaned === text) { return false; }
+    fs.writeFileSync(file, cleaned, 'utf8');
+    console.log(`DevMind: removed token-heavy @DATABASE/@ARCHITECTURE/@SECURITY imports from ${file}`);
+    return true;
+}
+
+/**
+ * Writes the skills and agents bundled in the VSIX (resources/manifest.json) into every open workspace
+ * folder's .agents/ and .claude/. Runs on activation (right after the VSIX is installed and on every
+ * window open), when folders are added, and from the "DevMind: Install AI Skills & Agents" command.
  */
 function ensureBundledSkills(context: vscode.ExtensionContext, runner: DevMindRunner, notify: boolean): void {
-    const bundled = path.join(context.extensionPath, 'resources', 'skills');
+    const resources = path.join(context.extensionPath, 'resources');
     const roots = new Set<string>((vscode.workspace.workspaceFolders || []).map(f => f.uri.fsPath));
     const override = runner.getWorkspaceRoot();
     if (override) { roots.add(override); }
 
     const changed: string[] = [];
+    const kept: string[] = [];
     for (const root of roots) {
         try {
-            for (const r of installBundledSkills(bundled, root)) {
+            stripDocImports(root);
+            for (const r of installBundledAssets(resources, root)) {
                 if (r.action === 'created' || r.action === 'updated') {
                     changed.push(`${r.action} ${path.basename(root)}/${r.target}`);
+                } else if (r.action === 'kept-custom') {
+                    kept.push(`${path.basename(root)}/${r.target}`);
                 }
             }
+            if (!notify) { suggestSundoraDbMcp(context, root); }
         } catch (err: any) {
             console.error(`DevMind: failed to install skills into ${root}:`, err);
             if (notify) { vscode.window.showErrorMessage(`DevMind: Could not install AI skills in ${root}: ${err.message}`); }
         }
     }
     if (changed.length) {
-        console.log(`DevMind skills: ${changed.join(', ')}`);
+        console.log(`DevMind skills/agents: ${changed.join(', ')}`);
     }
     if (notify) {
+        const skills = new Set(changed.filter(c => c.includes('/skills/')).map(c => c.split('/').pop()));
+        const agents = new Set(changed.filter(c => c.includes('/agents/')).map(c => c.split('/').pop()));
         vscode.window.showInformationMessage(changed.length
-            ? `DevMind: AI skills installed (${changed.length}): secret-guard → .agents/skills & .claude/skills`
-            : 'DevMind: AI skills already up to date.');
+            ? `DevMind: installed/updated ${skills.size} skill(s) and ${agents.size} agent(s) into .agents/ & .claude/` +
+              (kept.length ? ` (${kept.length} customised copies kept)` : '')
+            : `DevMind: AI skills & agents already up to date${kept.length ? ` (${kept.length} customised copies kept)` : ''}.`);
     }
 }
 
@@ -52,6 +77,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.commands.registerCommand('devmind.installSkills', () => ensureBundledSkills(context, runner, true)),
+        registerSundoraDbMcp(context, runner),
         vscode.workspace.onDidChangeWorkspaceFolders(() => ensureBundledSkills(context, runner, false))
     );
     const sidebarProvider = new DevMindSidebarProvider(runner);

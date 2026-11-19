@@ -131,9 +131,8 @@ def cmd_doctor(project_dir):
     scores["AI Context"] = 95 if (has_agents and has_graph) else 50
 
     # 2. Architecture (100)
-    has_arch = (project_dir / "ARCHITECTURE.md").exists()
     has_adr = (project_dir / "docs" / "adr").exists()
-    scores["Architecture"] = 90 if (has_arch and has_adr) else 70
+    scores["Architecture"] = 90 if has_adr else 70
 
     # 3. Testing (100)
     test_files = [
@@ -146,18 +145,15 @@ def cmd_doctor(project_dir):
     scores["Testing"] = 90 if (has_test_cfg and has_test_dir) else (80 if has_test_cfg or has_test_dir else 40)
 
     # 4. Security (100)
-    has_sec = (project_dir / "SECURITY.md").exists()
     has_env = (project_dir / ".env").exists()
-    scores["Security"] = 90 if (has_sec and not has_env) else 80
+    scores["Security"] = 90 if not has_env else 80
 
     # 5. Documentation (100)
     has_readme = (project_dir / "README.md").exists()
-    has_setup = (project_dir / "AI_SETUP.md").exists()
-    scores["Documentation"] = 95 if (has_readme and has_setup) else 75
+    scores["Documentation"] = 95 if has_readme else 75
 
     # 6. Database (100)
-    has_db_doc = (project_dir / "DATABASE.md").exists()
-    scores["Database"] = 90 if has_db_doc else 60
+    scores["Database"] = 90
 
     # 7. Code Quality (100)
     has_rules = (project_dir / ".agents" / "rules").exists()
@@ -459,7 +455,7 @@ def cmd_sync(project_dir):
         log_ok("HTML graph visualizer updated (graphify-out/graph.html)")
 
     # 4. Update Intelligence Docs
-    docs_needed = status["architecture"] == "Stale" or status["database"] == "Stale" or not last_sync_commit
+    docs_needed = not last_sync_commit  # docs are opt-in; no refresh on every sync
     if docs_needed:
         setup_script = Path(__file__).resolve().parent.parent / "setup-ai-project.sh"
         if not setup_script.exists():

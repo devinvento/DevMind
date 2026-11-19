@@ -42,6 +42,11 @@
     },
     "commands": [
       {
+        "command": "devmind.setupSundoraDbMcp",
+        "title": "DevMind: Set Up sundora-db MCP (read-only POS database)",
+        "icon": "$(database)"
+      },
+      {
         "command": "devmind.memoryConnectDrive",
         "title": "DevMind: Connect Google Drive (AI Memory)",
         "icon": "$(plug)"
@@ -83,7 +88,7 @@
       },
       {
         "command": "devmind.installSkills",
-        "title": "DevMind: Install AI Skills (.agents & .claude)",
+        "title": "DevMind: Install AI Skills & Agents (.agents & .claude)",
         "icon": "$(shield)"
       },
       {

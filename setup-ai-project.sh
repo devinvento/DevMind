@@ -2288,9 +2288,6 @@ $CLAUDE_MD_BEGIN
 @.agents/AGENTS.md
 
 - Stack profile: \`$PROFILE_NAME\` ($PROJECT_TYPE)
-- Architecture: @ARCHITECTURE.md
-- Database: @DATABASE.md
-- Security: @SECURITY.md
 - Project memory: \`.devmind/memory/\` · ADRs: \`docs/adr/\`
 - **Chat history (read first)**: \`.devmind/memory/chat-history.md\`, i.e. previous AI sessions from all machines, synced via Google Drive. Never commit \`.devmind/memory/\`.
 - Before any \`git push\`: use the \`secret-guard\` skill (\`devmind scan\`).
@@ -2827,9 +2824,13 @@ main() {
     detect_database
 
     # 4. Intelligence Documents, Testing Scaffold & Memory Setup
-    generate_database_docs
-    generate_architecture_docs
-    generate_security_docs
+    # DATABASE/ARCHITECTURE/SECURITY.md are opt-in: they are large, go stale and
+    # cost tokens whenever an agent reads them. Enable with DEVMIND_GENERATE_DOCS=1.
+    if [[ "${DEVMIND_GENERATE_DOCS:-0}" == "1" ]]; then
+        generate_database_docs
+        generate_architecture_docs
+        generate_security_docs
+    fi
     generate_testing_scaffold
     setup_project_memory_and_adr
     setup_git_hooks
@@ -2853,7 +2854,6 @@ main() {
     build_graphify_graph
     initialize_context_manifest
     configure_graphify_mcp
-    create_setup_report
 
     # 8. Diagnostics & Engineering Score
     run_devmind_doctor
@@ -2862,7 +2862,7 @@ main() {
     echo "Next steps:"
     echo "1. Run 'devmind doctor' or 'devmind sync' anytime."
     echo "2. Open: $PROJECT_DIR"
-    echo "3. Read: $PROJECT_DIR/AI_SETUP.md and .agents/AGENTS.md"
+    echo "3. Read: $PROJECT_DIR/.agents/AGENTS.md"
     echo
 }
 
